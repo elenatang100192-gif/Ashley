@@ -134,16 +134,40 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
             
             try {
+                console.log('开始初始化 Firestore...');
                 await initFirestore();
-                console.log('Firestore initialized');
+                console.log('✅ Firestore initialized');
                 
                 // 加载初始数据（使用 try-catch 确保单个失败不影响其他）
+                // 添加超时处理，避免无限加载
+                const LOAD_TIMEOUT = 30000; // 30秒超时
                 let menuLoadError = null;
+                
                 try {
-                    menuItems = await loadMenuItemsFromFirestore();
-                    console.log('Menu items loaded:', menuItems.length, 'items');
+                    console.log('开始加载菜单数据...');
+                    // 使用 Promise.race 添加超时
+                    const loadPromise = loadMenuItemsFromFirestore();
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('数据加载超时（30秒）。请检查网络连接或刷新页面重试。')), LOAD_TIMEOUT)
+                    );
+                    
+                    menuItems = await Promise.race([loadPromise, timeoutPromise]);
+                    console.log('✅ Menu items loaded:', menuItems.length, 'items');
+                    
+                    // 如果数据为空，记录警告（renderMenu 会处理显示）
+                    if (menuItems.length === 0) {
+                        console.warn('⚠️ Menu items array is empty - Firestore collection may be empty');
+                        console.log('提示：如果这是第一次使用，需要先添加菜单数据');
+                    } else {
+                        console.log('菜单数据示例:', menuItems.slice(0, 2)); // 显示前2个菜单项作为示例
+                    }
                 } catch (menuError) {
-                    console.error('Failed to load menu items:', menuError);
+                    console.error('❌ Failed to load menu items:', menuError);
+                    console.error('错误详情:', {
+                        message: menuError.message,
+                        stack: menuError.stack,
+                        name: menuError.name
+                    });
                     menuItems = [];
                     menuLoadError = menuError;
                     // 显示用户友好的错误提示
@@ -157,14 +181,19 @@ document.addEventListener('DOMContentLoaded', async function() {
                 
                 let ordersLoadError = null;
                 try {
-                    allOrders = await loadOrdersFromFirestore();
-                    console.log('Orders loaded:', allOrders.length, 'orders');
+                    console.log('开始加载订单数据...');
+                    const loadOrdersPromise = loadOrdersFromFirestore();
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('订单加载超时')), LOAD_TIMEOUT)
+                    );
+                    allOrders = await Promise.race([loadOrdersPromise, timeoutPromise]);
+                    console.log('✅ Orders loaded:', allOrders.length, 'orders');
                 } catch (ordersError) {
-                    console.error('Failed to load orders:', ordersError);
+                    console.error('❌ Failed to load orders:', ordersError);
                     allOrders = [];
                     ordersLoadError = ordersError;
                     // 订单加载失败不影响菜单显示，只记录错误
-                    console.warn('Orders loading failed:', ordersError.message);
+                    console.warn('⚠️ Orders loading failed:', ordersError.message);
                 }
                 
                 // 如果菜单加载失败，不继续渲染
@@ -174,27 +203,30 @@ document.addEventListener('DOMContentLoaded', async function() {
                 
                 // 设置实时监听
                 try {
+                    console.log('设置实时数据监听...');
                     unsubscribeMenuItems = subscribeToMenuItems((items) => {
                         menuItems = items;
-                        console.log('Menu items updated via real-time sync:', items.length, 'items');
+                        console.log('🔄 Menu items updated via real-time sync:', items.length, 'items');
                         renderMenu();
                         renderItemsList();
                     });
                     
                     unsubscribeOrders = subscribeToOrders((orders) => {
                         allOrders = orders;
-                        console.log('Orders updated via real-time sync:', orders.length, 'orders');
+                        console.log('🔄 Orders updated via real-time sync:', orders.length, 'orders');
                         // 如果当前在订单页面，刷新显示
                         if (document.getElementById('ordersPage').classList.contains('active')) {
                             renderAllOrders();
                         }
                     });
                     
-                    console.log('Firebase initialized and real-time sync enabled');
+                    console.log('✅ Firebase initialized and real-time sync enabled');
                 } catch (subscribeError) {
-                    console.error('Failed to set up real-time subscriptions:', subscribeError);
-                    console.warn('Continuing without real-time sync');
+                    console.error('❌ Failed to set up real-time subscriptions:', subscribeError);
+                    console.warn('⚠️ Continuing without real-time sync');
                 }
+                
+                console.log('✅ Firebase 数据加载完成');
             } catch (firebaseError) {
                 console.error('Firebase initialization failed:', firebaseError);
                 const errorMsg = getErrorMessage(firebaseError, 'Firebase 数据库');
@@ -218,6 +250,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         } else {
             // 使用 IndexedDB（本地存储）
+            console.log('使用 IndexedDB（本地存储）...');
             await initDB();
             
             // Migrate data from localStorage to IndexedDB if needed
@@ -226,11 +259,15 @@ document.addEventListener('DOMContentLoaded', async function() {
             // Load data from IndexedDB
             await loadMenuFromStorage();
             await loadOrdersFromStorage();
+            console.log('✅ IndexedDB 数据加载完成');
         }
         
+        // 统一渲染界面（无论使用 Firebase 还是 IndexedDB）
+        console.log('开始渲染菜单界面...');
         renderMenu();
         renderSelectedItems();
         renderItemsList();
+        console.log('✅ 页面初始化完成');
     
     // Bind events
     document.getElementById('confirmBtn').addEventListener('click', confirmOrder);
@@ -1073,10 +1110,28 @@ function renderItemsList() {
 // Render menu
 function renderMenu() {
     const container = document.getElementById('menuContainer');
+    if (!container) {
+        console.error('menuContainer not found');
+        return;
+    }
+    
     container.innerHTML = '';
     
     if (menuItems.length === 0) {
-        container.innerHTML = '<div class="empty-message">No menu items available. Please add items in the management page.</div>';
+        container.innerHTML = '<div class="empty-message" style="padding: 40px; text-align: center; max-width: 600px; margin: 0 auto;">' +
+            '<h3 style="color: #4CAF50; margin-bottom: 15px;">📋 菜单为空</h3>' +
+            '<p style="margin-bottom: 20px; color: #666;">Firestore 数据库中还没有菜单数据。</p>' +
+            '<div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">' +
+            '<p style="margin-bottom: 10px; font-weight: bold; color: #333;">如何添加菜单：</p>' +
+            '<ol style="margin-left: 20px; color: #666; line-height: 1.8;">' +
+            '<li>点击右上角的<strong>"管理"</strong>按钮</li>' +
+            '<li>点击<strong>"添加菜单项"</strong>按钮</li>' +
+            '<li>填写菜单信息（名称、分类、价格等）</li>' +
+            '<li>点击<strong>"保存"</strong>按钮</li>' +
+            '</ol>' +
+            '</div>' +
+            '<button onclick="location.reload()" style="padding: 12px 24px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px;">🔄 刷新页面</button>' +
+            '</div>';
         return;
     }
     
