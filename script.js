@@ -1788,22 +1788,18 @@ async function downloadOrders() {
         return;
     }
     
-    // Prepare CSV data with detailed information
-    const csvHeaders = ['Date', 'Customer Name', 'Items', 'Restaurants', 'Total Price'];
-    const csvRows = allOrders.map(order => {
-        const itemsList = order.items.map(item => item.price ? `${item.name} (${item.price})` : item.name).join('; ');
-        const restaurantsList = order.items.map(item => item.tag || '').filter(tag => tag).join('; ');
-        const totalPrice = order.items.reduce((sum, item) => {
-            const price = item.price ? parseFloat(item.price.replace(/[^0-9.]/g, '')) || 0 : 0;
-            return sum + price;
-        }, 0);
-        return [
-            order.date,
-            order.name,
-            itemsList,
-            restaurantsList,
-            `$${totalPrice.toFixed(2)}`
-        ];
+    // Prepare CSV data with detailed information - one item per row
+    const csvHeaders = ['Date', 'Customer Name', 'Item Name', 'Item Price', 'Restaurant'];
+    const csvRows = allOrders.flatMap(order => {
+        return order.items.map(item => {
+            return [
+                order.date,
+                order.name,
+                item.name,
+                item.price || '',
+                item.tag || ''
+            ];
+        });
     });
     
     // Convert to CSV format
