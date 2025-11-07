@@ -938,12 +938,28 @@ async function addMenuItem() {
         const saveAndRefresh = async () => {
             try {
                 await saveMenuToStorage();
-                console.log('Menu updated in storage'); // Debug log
+                console.log('✅ Menu updated in storage:', menuItems.length, 'items');
+                
+                // 如果使用 Firebase，等待一下让实时监听更新，然后手动刷新一次
+                if (USE_FIREBASE) {
+                    console.log('⏳ Waiting for real-time sync...');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    try {
+                        const freshItems = await loadMenuItemsFromFirestore();
+                        if (freshItems.length > 0) {
+                            menuItems = freshItems;
+                            console.log('✅ Reloaded menu items after update:', menuItems.length, 'items');
+                        }
+                    } catch (reloadError) {
+                        console.warn('⚠️ Failed to reload after update (will rely on real-time sync):', reloadError);
+                    }
+                }
                 
                 // Clear form and exit edit mode
                 cancelEdit();
                 
                 // Refresh displays
+                console.log('🔄 Rendering menu with', menuItems.length, 'items');
                 renderMenu();
                 renderItemsList();
                 
@@ -955,8 +971,8 @@ async function addMenuItem() {
             } catch (e) {
                 addBtn.disabled = false;
                 addBtn.textContent = originalText;
-                alert('Save failed: Insufficient storage space. Please delete some menu items or use smaller images.');
-                console.error('Storage error:', e);
+                alert('Save failed: ' + (e.message || 'Insufficient storage space. Please delete some menu items or use smaller images.'));
+                console.error('❌ Storage error:', e);
             }
         };
         
@@ -1000,14 +1016,31 @@ async function addMenuItem() {
             // Try to save to storage
             try {
                 await saveMenuToStorage();
-                console.log('Menu saved to storage'); // Debug log
+                console.log('✅ Menu saved to storage:', menuItems.length, 'items');
+                
+                // 如果使用 Firebase，等待一下让实时监听更新，然后手动刷新一次
+                if (USE_FIREBASE) {
+                    console.log('⏳ Waiting for real-time sync...');
+                    // 等待 500ms 让实时监听有机会更新
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    // 手动重新加载一次数据，确保显示最新数据
+                    try {
+                        const freshItems = await loadMenuItemsFromFirestore();
+                        if (freshItems.length > 0) {
+                            menuItems = freshItems;
+                            console.log('✅ Reloaded menu items after save:', menuItems.length, 'items');
+                        }
+                    } catch (reloadError) {
+                        console.warn('⚠️ Failed to reload after save (will rely on real-time sync):', reloadError);
+                    }
+                }
             } catch (e) {
                 // If storage fails, remove the item and show error
                 menuItems.pop();
                 addBtn.disabled = false;
                 addBtn.textContent = originalText;
-                alert('Save failed: Insufficient storage space. Please delete some menu items or use smaller images.');
-                console.error('Storage error:', e);
+                alert('Save failed: ' + (e.message || 'Insufficient storage space. Please delete some menu items or use smaller images.'));
+                console.error('❌ Storage error:', e);
                 return;
             }
             
@@ -1025,6 +1058,7 @@ async function addMenuItem() {
             }
             
             // Refresh displays
+            console.log('🔄 Rendering menu with', menuItems.length, 'items');
             renderMenu();
             renderItemsList();
             

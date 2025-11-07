@@ -50,9 +50,12 @@ async function saveMenuItemsToFirestore(items) {
         
         // 添加或更新所有菜单项
         items.forEach(item => {
-            const docRef = firestoreDB.collection(COLLECTION_MENU).doc(String(item.id));
-            batch.set(docRef, {
-                id: item.id,
+            // 确保 id 是数字类型（用于排序）
+            const itemId = typeof item.id === 'string' ? Number(item.id) || item.id : item.id;
+            const docRef = firestoreDB.collection(COLLECTION_MENU).doc(String(itemId));
+            
+            const docData = {
+                id: itemId, // 确保 id 字段类型一致
                 category: item.category || '',
                 name: item.name || '',
                 subtitle: item.subtitle || '',
@@ -60,11 +63,15 @@ async function saveMenuItemsToFirestore(items) {
                 price: item.price || '',
                 image: item.image || '',
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+            };
+            
+            console.log('💾 Saving item:', { docId: String(itemId), data: { id: docData.id, name: docData.name } });
+            batch.set(docRef, docData, { merge: true });
         });
         
         await batch.commit();
-        console.log('Menu items saved to Firestore:', items.length, 'items');
+        console.log('✅ Menu items saved to Firestore:', items.length, 'items');
+        console.log('📋 Saved items:', items.map(item => ({ id: item.id, name: item.name })));
         return true;
     } catch (error) {
         console.error('Failed to save menu items to Firestore:', error);
@@ -100,6 +107,7 @@ async function loadMenuItemsFromFirestore() {
         const items = [];
         snapshot.forEach(doc => {
             const data = doc.data();
+            console.log('📄 Loading document:', doc.id, 'Data:', { id: data.id, name: data.name, category: data.category });
             items.push({
                 id: data.id,
                 category: data.category || '',
@@ -118,7 +126,10 @@ async function loadMenuItemsFromFirestore() {
             return idA - idB;
         });
         
-        console.log('Menu items loaded from Firestore:', items.length, 'items');
+        console.log('✅ Menu items loaded from Firestore:', items.length, 'items');
+        if (items.length > 0) {
+            console.log('📋 Loaded items:', items.map(item => ({ id: item.id, name: item.name, category: item.category })));
+        }
         return items;
     } catch (error) {
         console.error('Failed to load menu items from Firestore:', error);
@@ -232,26 +243,81 @@ function subscribeToMenuItems(callback) {
         return () => {};
     }
     
-    return firestoreDB.collection(COLLECTION_MENU)
-        .orderBy('id')
-        .onSnapshot((snapshot) => {
-            const items = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                items.push({
-                    id: data.id,
-                    category: data.category || '',
-                    name: data.name || '',
-                    subtitle: data.subtitle || '',
-                    description: data.description || '',
-                    price: data.price || '',
-                    image: data.image || ''
+    // 尝试使用 orderBy，如果失败则回退到不使用 orderBy
+    let unsubscribe = null;
+    
+    try {
+        unsubscribe = firestoreDB.collection(COLLECTION_MENU)
+            .orderBy('id')
+            .onSnapshot((snapshot) => {
+                console.log('🔄 Real-time update received:', snapshot.size, 'documents');
+                const items = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    console.log('📄 Document:', doc.id, 'Data:', { id: data.id, name: data.name });
+                    items.push({
+                        id: data.id,
+                        category: data.category || '',
+                        name: data.name || '',
+                        subtitle: data.subtitle || '',
+                        description: data.description || '',
+                        price: data.price || '',
+                        image: data.image || ''
+                    });
                 });
+                
+                // 手动按 id 排序（确保顺序一致）
+                items.sort((a, b) => {
+                    const idA = Number(a.id) || 0;
+                    const idB = Number(b.id) || 0;
+                    return idA - idB;
+                });
+                
+                console.log('✅ Processed', items.length, 'menu items from real-time update');
+                callback(items);
+            }, (error) => {
+                console.error('❌ Error listening to menu items with orderBy:', error);
+                // 如果 orderBy 失败（可能是缺少索引），尝试不使用 orderBy
+                if (error.code === 'failed-precondition' || error.message.includes('index')) {
+                    console.warn('⚠️ orderBy failed, retrying without orderBy...');
+                    unsubscribe = firestoreDB.collection(COLLECTION_MENU)
+                        .onSnapshot((snapshot) => {
+                            console.log('🔄 Real-time update received (no orderBy):', snapshot.size, 'documents');
+                            const items = [];
+                            snapshot.forEach(doc => {
+                                const data = doc.data();
+                                items.push({
+                                    id: data.id,
+                                    category: data.category || '',
+                                    name: data.name || '',
+                                    subtitle: data.subtitle || '',
+                                    description: data.description || '',
+                                    price: data.price || '',
+                                    image: data.image || ''
+                                });
+                            });
+                            
+                            // 手动按 id 排序
+                            items.sort((a, b) => {
+                                const idA = Number(a.id) || 0;
+                                const idB = Number(b.id) || 0;
+                                return idA - idB;
+                            });
+                            
+                            console.log('✅ Processed', items.length, 'menu items from real-time update (no orderBy)');
+                            callback(items);
+                        }, (fallbackError) => {
+                            console.error('❌ Error listening to menu items (fallback):', fallbackError);
+                        });
+                }
             });
-            callback(items);
-        }, (error) => {
-            console.error('Error listening to menu items:', error);
-        });
+    } catch (error) {
+        console.error('❌ Failed to set up real-time listener:', error);
+        // 如果完全失败，返回一个空函数
+        return () => {};
+    }
+    
+    return unsubscribe || (() => {});
 }
 
 // 监听订单变化（实时同步）
