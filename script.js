@@ -201,29 +201,36 @@ document.addEventListener('DOMContentLoaded', async function() {
                     return;
                 }
                 
-                // 设置实时监听
+                // 设置实时监听（必须在数据加载后设置，以便立即接收更新）
                 try {
-                    console.log('设置实时数据监听...');
+                    console.log('🔍 Setting up real-time data listeners...');
                     unsubscribeMenuItems = subscribeToMenuItems((items) => {
+                        console.log('🔄 Real-time sync triggered:', items.length, 'items received');
+                        console.log('📋 Items:', items.map(item => ({ id: item.id, name: item.name })));
+                        
+                        // 更新数据
                         menuItems = items;
-                        console.log('🔄 Menu items updated via real-time sync:', items.length, 'items');
+                        
+                        // 刷新显示
+                        console.log('🔄 Rendering menu with', items.length, 'items from real-time sync');
                         renderMenu();
                         renderItemsList();
                     });
                     
                     unsubscribeOrders = subscribeToOrders((orders) => {
-                        allOrders = orders;
                         console.log('🔄 Orders updated via real-time sync:', orders.length, 'orders');
+                        allOrders = orders;
                         // 如果当前在订单页面，刷新显示
                         if (document.getElementById('ordersPage').classList.contains('active')) {
                             renderAllOrders();
                         }
                     });
                     
-                    console.log('✅ Firebase initialized and real-time sync enabled');
+                    console.log('✅ Firebase real-time sync listeners set up successfully');
+                    console.log('💡 Note: Real-time listeners will automatically update when data changes on any device');
                 } catch (subscribeError) {
                     console.error('❌ Failed to set up real-time subscriptions:', subscribeError);
-                    console.warn('⚠️ Continuing without real-time sync');
+                    console.warn('⚠️ Continuing without real-time sync - data will only sync on page refresh');
                 }
                 
                 console.log('✅ Firebase 数据加载完成');
@@ -939,26 +946,20 @@ async function addMenuItem() {
             try {
                 await saveMenuToStorage();
                 console.log('✅ Menu updated in storage:', menuItems.length, 'items');
+                console.log('💡 Real-time listener will automatically update the display when Firebase syncs');
                 
-                // 如果使用 Firebase，等待一下让实时监听更新，然后手动刷新一次
+                // 如果使用 Firebase，等待一下让实时监听有机会触发
                 if (USE_FIREBASE) {
-                    console.log('⏳ Waiting for real-time sync...');
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    try {
-                        const freshItems = await loadMenuItemsFromFirestore();
-                        if (freshItems.length > 0) {
-                            menuItems = freshItems;
-                            console.log('✅ Reloaded menu items after update:', menuItems.length, 'items');
-                        }
-                    } catch (reloadError) {
-                        console.warn('⚠️ Failed to reload after update (will rely on real-time sync):', reloadError);
-                    }
+                    console.log('⏳ Waiting for real-time sync to trigger...');
+                    // 等待 1 秒让实时监听有机会更新
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.log('✅ Real-time sync should have triggered by now');
                 }
                 
                 // Clear form and exit edit mode
                 cancelEdit();
                 
-                // Refresh displays
+                // Refresh displays (实时监听也会触发刷新，但这里确保立即显示)
                 console.log('🔄 Rendering menu with', menuItems.length, 'items');
                 renderMenu();
                 renderItemsList();
@@ -1017,22 +1018,16 @@ async function addMenuItem() {
             try {
                 await saveMenuToStorage();
                 console.log('✅ Menu saved to storage:', menuItems.length, 'items');
+                console.log('💡 Real-time listener will automatically update the display when Firebase syncs');
                 
-                // 如果使用 Firebase，等待一下让实时监听更新，然后手动刷新一次
+                // 如果使用 Firebase，等待一下让实时监听有机会触发
+                // Firestore 的实时监听通常在保存后很快触发（通常 < 100ms）
                 if (USE_FIREBASE) {
-                    console.log('⏳ Waiting for real-time sync...');
-                    // 等待 500ms 让实时监听有机会更新
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    // 手动重新加载一次数据，确保显示最新数据
-                    try {
-                        const freshItems = await loadMenuItemsFromFirestore();
-                        if (freshItems.length > 0) {
-                            menuItems = freshItems;
-                            console.log('✅ Reloaded menu items after save:', menuItems.length, 'items');
-                        }
-                    } catch (reloadError) {
-                        console.warn('⚠️ Failed to reload after save (will rely on real-time sync):', reloadError);
-                    }
+                    console.log('⏳ Waiting for real-time sync to trigger...');
+                    // 等待 1 秒让实时监听有机会更新
+                    // 实时监听会自动更新 menuItems 和刷新显示
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.log('✅ Real-time sync should have triggered by now');
                 }
             } catch (e) {
                 // If storage fails, remove the item and show error

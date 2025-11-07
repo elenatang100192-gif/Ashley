@@ -243,81 +243,148 @@ function subscribeToMenuItems(callback) {
         return () => {};
     }
     
-    // 尝试使用 orderBy，如果失败则回退到不使用 orderBy
-    let unsubscribe = null;
+    // 用于存储当前活动的取消订阅函数
+    let currentUnsubscribe = null;
     
-    try {
-        unsubscribe = firestoreDB.collection(COLLECTION_MENU)
-            .orderBy('id')
-            .onSnapshot((snapshot) => {
-                console.log('🔄 Real-time update received:', snapshot.size, 'documents');
-                const items = [];
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    console.log('📄 Document:', doc.id, 'Data:', { id: data.id, name: data.name });
-                    items.push({
-                        id: data.id,
-                        category: data.category || '',
-                        name: data.name || '',
-                        subtitle: data.subtitle || '',
-                        description: data.description || '',
-                        price: data.price || '',
-                        image: data.image || ''
-                    });
-                });
-                
-                // 手动按 id 排序（确保顺序一致）
-                items.sort((a, b) => {
-                    const idA = Number(a.id) || 0;
-                    const idB = Number(b.id) || 0;
-                    return idA - idB;
-                });
-                
-                console.log('✅ Processed', items.length, 'menu items from real-time update');
-                callback(items);
-            }, (error) => {
-                console.error('❌ Error listening to menu items with orderBy:', error);
-                // 如果 orderBy 失败（可能是缺少索引），尝试不使用 orderBy
-                if (error.code === 'failed-precondition' || error.message.includes('index')) {
-                    console.warn('⚠️ orderBy failed, retrying without orderBy...');
-                    unsubscribe = firestoreDB.collection(COLLECTION_MENU)
-                        .onSnapshot((snapshot) => {
-                            console.log('🔄 Real-time update received (no orderBy):', snapshot.size, 'documents');
-                            const items = [];
-                            snapshot.forEach(doc => {
-                                const data = doc.data();
-                                items.push({
-                                    id: data.id,
-                                    category: data.category || '',
-                                    name: data.name || '',
-                                    subtitle: data.subtitle || '',
-                                    description: data.description || '',
-                                    price: data.price || '',
-                                    image: data.image || ''
-                                });
-                            });
-                            
-                            // 手动按 id 排序
-                            items.sort((a, b) => {
-                                const idA = Number(a.id) || 0;
-                                const idB = Number(b.id) || 0;
-                                return idA - idB;
-                            });
-                            
-                            console.log('✅ Processed', items.length, 'menu items from real-time update (no orderBy)');
-                            callback(items);
-                        }, (fallbackError) => {
-                            console.error('❌ Error listening to menu items (fallback):', fallbackError);
-                        });
-                }
+    // 处理快照数据的通用函数
+    const processSnapshot = (snapshot, source) => {
+        console.log(`🔄 Real-time update received (${source}):`, snapshot.size, 'documents');
+        const items = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            console.log('📄 Document:', doc.id, 'Data:', { id: data.id, name: data.name, category: data.category });
+            items.push({
+                id: data.id,
+                category: data.category || '',
+                name: data.name || '',
+                subtitle: data.subtitle || '',
+                description: data.description || '',
+                price: data.price || '',
+                image: data.image || ''
             });
+        });
+        
+        // 手动按 id 排序（确保顺序一致）
+        items.sort((a, b) => {
+            const idA = Number(a.id) || 0;
+            const idB = Number(b.id) || 0;
+            return idA - idB;
+        });
+        
+        console.log(`✅ Processed ${items.length} menu items from real-time update (${source})`);
+        if (items.length > 0) {
+            console.log('📋 Items:', items.map(item => ({ id: item.id, name: item.name })));
+        }
+        callback(items);
+    };
+    
+    // 尝试使用 orderBy 监听
+    try {
+        console.log('🔍 Setting up real-time listener with orderBy...');
+        currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
+            .orderBy('id')
+            .onSnapshot(
+                (snapshot) => {
+                    processSnapshot(snapshot, 'orderBy');
+                },
+                (error) => {
+                    console.error('❌ Error listening to menu items with orderBy:', error);
+                    // 如果 orderBy 失败（可能是缺少索引），尝试不使用 orderBy
+                    if (error.code === 'failed-precondition' || 
+                        error.message.includes('index') || 
+                        error.message.includes('requires an index')) {
+                        console.warn('⚠️ orderBy failed, setting up listener without orderBy...');
+                        
+                        // 先取消当前的监听（如果存在）
+                        if (currentUnsubscribe) {
+                            try {
+                                currentUnsubscribe();
+                            } catch (e) {
+                                console.warn('Failed to unsubscribe previous listener:', e);
+                            }
+                        }
+                        
+                        // 设置不使用 orderBy 的监听
+                        try {
+                            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
+                                .onSnapshot(
+                                    (snapshot) => {
+                                        processSnapshot(snapshot, 'no orderBy');
+                                    },
+                                    (fallbackError) => {
+                                        console.error('❌ Error listening to menu items (fallback):', fallbackError);
+                                        // 即使失败也尝试调用回调，使用空数组
+                                        callback([]);
+                                    }
+                                );
+                            console.log('✅ Fallback listener set up successfully');
+                        } catch (fallbackSetupError) {
+                            console.error('❌ Failed to set up fallback listener:', fallbackSetupError);
+                            callback([]);
+                        }
+                    } else {
+                        // 其他类型的错误，也尝试设置不使用 orderBy 的监听
+                        console.warn('⚠️ Unexpected error, trying fallback listener...');
+                        if (currentUnsubscribe) {
+                            try {
+                                currentUnsubscribe();
+                            } catch (e) {
+                                console.warn('Failed to unsubscribe:', e);
+                            }
+                        }
+                        try {
+                            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
+                                .onSnapshot(
+                                    (snapshot) => {
+                                        processSnapshot(snapshot, 'fallback');
+                                    },
+                                    (fallbackError) => {
+                                        console.error('❌ Fallback listener also failed:', fallbackError);
+                                        callback([]);
+                                    }
+                                );
+                        } catch (e) {
+                            console.error('❌ Complete failure setting up listener:', e);
+                            callback([]);
+                        }
+                    }
+                }
+            );
+        console.log('✅ Real-time listener with orderBy set up successfully');
     } catch (error) {
         console.error('❌ Failed to set up real-time listener:', error);
-        // 如果完全失败，返回一个空函数
-        return () => {};
+        // 如果完全失败，尝试设置不使用 orderBy 的监听
+        try {
+            console.log('🔄 Attempting to set up listener without orderBy...');
+            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
+                .onSnapshot(
+                    (snapshot) => {
+                        processSnapshot(snapshot, 'direct');
+                    },
+                    (directError) => {
+                        console.error('❌ Direct listener also failed:', directError);
+                        callback([]);
+                    }
+                );
+            console.log('✅ Direct listener set up successfully');
+        } catch (directError) {
+            console.error('❌ Complete failure:', directError);
+            return () => {};
+        }
     }
     
-    return unsubscribe || (() => {});
+    // 返回取消订阅函数
+    return () => {
+        if (currentUnsubscribe) {
+            try {
+                console.log('🔌 Unsubscribing from menu items listener...');
+                currentUnsubscribe();
+                currentUnsubscribe = null;
+            } catch (e) {
+                console.error('Error unsubscribing:', e);
+            }
+        }
+    };
 }
 
 // 监听订单变化（实时同步）
