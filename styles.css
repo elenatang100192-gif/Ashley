@@ -756,6 +756,31 @@ h2 {
     background: #bd2130;
 }
 
+.clear-all-btn {
+    padding: 10px 20px;
+    background: #dc3545;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: inherit;
+}
+
+.clear-all-btn:hover {
+    background: #c82333;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.clear-all-btn:active {
+    background: #bd2130;
+}
+
 /* Summary Page - Amazon Style */
 .summary-header {
     display: flex;

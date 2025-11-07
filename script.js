@@ -253,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 // 使用空数据继续，避免页面完全无法使用
                 menuItems = [];
                 allOrders = [];
-                return;
+                // 不返回，继续执行以绑定事件监听器
             }
         } else {
             // 使用 IndexedDB（本地存储）
@@ -285,6 +285,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('viewOrdersBtn').addEventListener('click', showOrdersPage);
     document.getElementById('downloadAllOrdersBtn').addEventListener('click', downloadOrders);
     document.getElementById('backToMenuFromOrdersBtn').addEventListener('click', showMenuPage);
+    
+    // Bind clear all orders button
+    const clearAllOrdersBtn = document.getElementById('clearAllOrdersBtn');
+    if (clearAllOrdersBtn) {
+        clearAllOrdersBtn.addEventListener('click', clearAllOrders);
+    }
     
     // Bind search input event
     const orderSearchInput = document.getElementById('orderSearchInput');
@@ -390,6 +396,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.error('Failed to initialize application:', e);
         alert('Failed to initialize application. Please refresh the page.');
     }
+    
+    // Expose functions to global scope for onclick handlers
+    window.deleteMenuItem = deleteMenuItem;
+    window.deleteOrder = deleteOrder;
+    window.clearAllOrders = clearAllOrders;
+    window.editMenuItem = editMenuItem;
 });
 
 // Show management page
@@ -1208,6 +1220,104 @@ async function deleteOrder(orderId) {
         } catch (e) {
             console.error('Failed to delete order:', e);
             alert('Failed to delete order. Please try again.');
+        }
+    }
+}
+
+// Clear all orders
+async function clearAllOrders() {
+    // Double confirmation for safety
+    const firstConfirm = confirm('⚠️ WARNING: This will delete ALL orders permanently!\n\nAre you sure you want to clear all orders?');
+    if (!firstConfirm) {
+        return;
+    }
+    
+    const secondConfirm = confirm('⚠️ FINAL CONFIRMATION\n\nThis action CANNOT be undone. All order data will be permanently deleted.\n\nClick OK to proceed, or Cancel to abort.');
+    if (!secondConfirm) {
+        return;
+    }
+    
+    try {
+        // Temporarily disable real-time listener to prevent it from reloading data during clear
+        let wasListening = false;
+        if (USE_FIREBASE && unsubscribeOrders) {
+            console.log('🔌 Temporarily disabling real-time listener during clear...');
+            unsubscribeOrders();
+            unsubscribeOrders = null;
+            wasListening = true;
+        }
+        
+        // Clear the local array
+        allOrders = [];
+        
+        // Clear from storage (Firebase or IndexedDB)
+        if (USE_FIREBASE) {
+            // Clear from Firestore
+            await clearAllOrdersFromFirestore();
+            console.log('✅ All orders cleared from Firestore');
+            
+            // Wait a moment to ensure Firestore has processed the deletion
+            await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+            // Clear from IndexedDB
+            if (db) {
+                await new Promise((resolve, reject) => {
+                    const transaction = db.transaction([STORE_ORDERS], 'readwrite');
+                    const store = transaction.objectStore(STORE_ORDERS);
+                    const clearRequest = store.clear();
+                    
+                    clearRequest.onsuccess = () => {
+                        console.log('✅ All orders cleared from IndexedDB');
+                        resolve();
+                    };
+                    
+                    clearRequest.onerror = () => {
+                        console.error('Failed to clear orders from IndexedDB:', clearRequest.error);
+                        reject(clearRequest.error);
+                    };
+                });
+            }
+        }
+        
+        // IMPORTANT: Always clear localStorage as well (backup storage)
+        // This ensures no old data persists from previous sessions
+        localStorage.removeItem('menuOrders');
+        console.log('✅ All orders cleared from localStorage');
+        
+        // Ensure allOrders array is empty before refreshing
+        allOrders = [];
+        
+        // Re-enable real-time listener if it was active
+        if (USE_FIREBASE && wasListening) {
+            console.log('🔌 Re-enabling real-time listener...');
+            unsubscribeOrders = subscribeToOrders((orders) => {
+                console.log('🔄 Orders updated via real-time sync:', orders.length, 'orders');
+                allOrders = orders;
+                // 如果当前在订单页面，刷新显示
+                if (document.getElementById('ordersPage').classList.contains('active')) {
+                    renderAllOrders();
+                }
+            });
+        }
+        
+        // Refresh the orders display (it will reload from storage, which should now be empty)
+        await renderAllOrders();
+        
+        // Show success message
+        alert('✅ All orders have been cleared successfully!');
+    } catch (e) {
+        console.error('Failed to clear all orders:', e);
+        alert('❌ Failed to clear all orders. Please try again.\n\nError: ' + (e.message || e));
+        
+        // Re-enable listener even if there was an error
+        if (USE_FIREBASE && !unsubscribeOrders) {
+            unsubscribeOrders = subscribeToOrders((orders) => {
+                console.log('🔄 Orders updated via real-time sync:', orders.length, 'orders');
+                allOrders = orders;
+                if (document.getElementById('ordersPage').classList.contains('active')) {
+                    renderAllOrders();
+                }
+            });
         }
     }
 }

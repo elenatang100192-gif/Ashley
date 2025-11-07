@@ -6,17 +6,155 @@ const COLLECTION_ORDERS = 'orders';
 
 // 初始化 Firestore
 let firestoreDB = null;
+let connectionState = 'unknown'; // 'unknown', 'online', 'offline'
+let connectionStateListeners = [];
+
+// 连接状态监听
+function setupConnectionStateListener() {
+    if (!firestoreDB) return;
+    
+    try {
+        // 监听 Firestore 连接状态
+        firestoreDB.enableNetwork().then(() => {
+            console.log('✅ Firestore network enabled');
+            updateConnectionState('online');
+        }).catch(err => {
+            console.warn('⚠️ Failed to enable Firestore network:', err);
+            updateConnectionState('offline');
+        });
+        
+        // 监听离线/在线状态
+        firestoreDB.onSnapshotsInSync(() => {
+            updateConnectionState('online');
+        });
+        
+        // 监听浏览器在线/离线事件
+        window.addEventListener('online', () => {
+            console.log('🌐 Browser is online, reconnecting Firestore...');
+            if (firestoreDB) {
+                firestoreDB.enableNetwork().then(() => {
+                    updateConnectionState('online');
+                }).catch(err => {
+                    console.error('Failed to reconnect:', err);
+                });
+            }
+        });
+        
+        window.addEventListener('offline', () => {
+            console.warn('⚠️ Browser is offline');
+            updateConnectionState('offline');
+        });
+    } catch (error) {
+        console.error('Failed to setup connection state listener:', error);
+    }
+}
+
+function updateConnectionState(newState) {
+    if (connectionState !== newState) {
+        const oldState = connectionState;
+        connectionState = newState;
+        console.log(`🔌 Firestore connection state: ${oldState} → ${newState}`);
+        connectionStateListeners.forEach(listener => {
+            try {
+                listener(newState, oldState);
+            } catch (e) {
+                console.error('Error in connection state listener:', e);
+            }
+        });
+    }
+}
+
+function onConnectionStateChange(callback) {
+    connectionStateListeners.push(callback);
+    // 立即调用一次当前状态
+    if (connectionState !== 'unknown') {
+        callback(connectionState, connectionState);
+    }
+    // 返回取消监听的函数
+    return () => {
+        const index = connectionStateListeners.indexOf(callback);
+        if (index > -1) {
+            connectionStateListeners.splice(index, 1);
+        }
+    };
+}
+
+// 带重试的操作包装器
+async function withRetry(operation, maxRetries = 3, delay = 1000) {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            const isConnectionError = error.code === 'unavailable' || 
+                                    error.message.includes('ERR_CONNECTION_CLOSED') ||
+                                    error.message.includes('Failed to fetch') ||
+                                    error.message.includes('network');
+            
+            if (isConnectionError && i < maxRetries - 1) {
+                const waitTime = delay * Math.pow(2, i); // 指数退避
+                console.warn(`⚠️ Operation failed (attempt ${i + 1}/${maxRetries}), retrying in ${waitTime}ms...`, error.message);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+                
+                // 尝试重新启用网络
+                if (firestoreDB) {
+                    try {
+                        await firestoreDB.enableNetwork();
+                    } catch (e) {
+                        console.warn('Failed to enable network:', e);
+                    }
+                }
+            } else {
+                throw error;
+            }
+        }
+    }
+    throw lastError;
+}
 
 function initFirestore() {
     try {
         if (typeof firebase === 'undefined') {
             throw new Error('Firebase SDK not loaded');
         }
-        firestoreDB = firebase.firestore();
-        console.log('Firestore initialized successfully');
+        
+        // 在创建 Firestore 实例之前配置设置
+        // 使用新的 settings() API 配置缓存（替代已弃用的 enablePersistence）
+        const db = firebase.firestore();
+        
+        // 配置缓存设置（启用多标签页同步和离线持久化）
+        // 注意：在 Firebase 10.7.1+ 中，使用 settings() 配置缓存会自动启用持久化
+        // 不需要手动调用 enablePersistence() 或 enableMultiTabIndexedDbPersistence()
+        try {
+            // 检查 CACHE_SIZE_UNLIMITED 常量是否存在
+            const cacheSize = firebase.firestore.CACHE_SIZE_UNLIMITED || 40 * 1024 * 1024; // 40MB 默认值
+            // 只在第一次调用时设置，避免覆盖已有设置
+            // 注意：Firebase 10.7.1+ 支持 merge 选项，但语法可能因版本而异
+            // 如果出现警告，可以忽略（不影响功能）
+            if (!firestoreDB) {
+                db.settings({
+                    cacheSizeBytes: cacheSize
+                });
+            }
+            console.log('✅ Firestore cache configured');
+        } catch (e) {
+            console.warn('⚠️ Failed to configure Firestore cache (will continue without cache):', e.message);
+            // 继续执行，即使缓存配置失败
+        }
+        
+        firestoreDB = db;
+        
+        // 设置连接状态监听
+        setupConnectionStateListener();
+        
+        console.log('✅ Firestore initialized successfully');
+        updateConnectionState('online');
         return Promise.resolve(firestoreDB);
     } catch (error) {
-        console.error('Failed to initialize Firestore:', error);
+        console.error('❌ Failed to initialize Firestore:', error);
+        updateConnectionState('offline');
+        // 即使初始化失败，也返回一个值，避免阻塞应用
         return Promise.reject(error);
     }
 }
@@ -27,7 +165,7 @@ async function saveMenuItemsToFirestore(items) {
         throw new Error('Firestore not initialized');
     }
     
-    try {
+    return withRetry(async () => {
         // 使用批处理来更新所有菜单项
         const batch = firestoreDB.batch();
         
@@ -73,7 +211,7 @@ async function saveMenuItemsToFirestore(items) {
         console.log('✅ Menu items saved to Firestore:', items.length, 'items');
         console.log('📋 Saved items:', items.map(item => ({ id: item.id, name: item.name })));
         return true;
-    } catch (error) {
+    }, 3, 1000).catch(error => {
         console.error('Failed to save menu items to Firestore:', error);
         
         // 提供更友好的错误信息
@@ -82,7 +220,7 @@ async function saveMenuItemsToFirestore(items) {
         // 检测常见错误类型
         if (error.code === 'permission-denied') {
             errorMessage = '权限被拒绝：请检查 Firestore 安全规则';
-        } else if (error.code === 'unavailable' || error.message.includes('network') || error.message.includes('Failed to fetch')) {
+        } else if (error.code === 'unavailable' || error.message.includes('network') || error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_CLOSED')) {
             errorMessage = '网络错误：无法连接到 Firebase，请检查网络连接';
         } else if (error.code === 'deadline-exceeded' || error.message.includes('timeout')) {
             errorMessage = '操作超时：请检查网络连接后重试';
@@ -97,7 +235,7 @@ async function saveMenuItemsToFirestore(items) {
         enhancedError.originalError = error;
         enhancedError.code = error.code;
         throw enhancedError;
-    }
+    });
 }
 
 // 从 Firestore 加载菜单项
@@ -106,7 +244,7 @@ async function loadMenuItemsFromFirestore() {
         throw new Error('Firestore not initialized');
     }
     
-    try {
+    return withRetry(async () => {
         // 先尝试使用 orderBy 查询
         let snapshot;
         try {
@@ -152,11 +290,11 @@ async function loadMenuItemsFromFirestore() {
             console.log('📋 Loaded items:', items.map(item => ({ id: item.id, name: item.name, category: item.category })));
         }
         return items;
-    } catch (error) {
+    }, 3, 1000).catch(error => {
         console.error('Failed to load menu items from Firestore:', error);
         // 抛出错误以便上层处理
         throw error;
-    }
+    });
 }
 
 // 保存订单到 Firestore
@@ -165,7 +303,7 @@ async function saveOrdersToFirestore(orders) {
         throw new Error('Firestore not initialized');
     }
     
-    try {
+    return withRetry(async () => {
         const batch = firestoreDB.batch();
         
         // 获取所有现有订单
@@ -198,10 +336,10 @@ async function saveOrdersToFirestore(orders) {
         await batch.commit();
         console.log('Orders saved to Firestore:', orders.length, 'orders');
         return true;
-    } catch (error) {
+    }, 3, 1000).catch(error => {
         console.error('Failed to save orders to Firestore:', error);
         throw error;
-    }
+    });
 }
 
 // 从 Firestore 加载订单
@@ -210,7 +348,7 @@ async function loadOrdersFromFirestore() {
         throw new Error('Firestore not initialized');
     }
     
-    try {
+    return withRetry(async () => {
         // 先尝试使用 orderBy 查询（需要索引）
         let snapshot;
         try {
@@ -250,11 +388,52 @@ async function loadOrdersFromFirestore() {
         
         console.log('Orders loaded from Firestore:', orders.length, 'orders');
         return orders;
-    } catch (error) {
+    }, 3, 1000).catch(error => {
         console.error('Failed to load orders from Firestore:', error);
         // 抛出错误以便上层处理
         throw error;
+    });
+}
+
+// 清除 Firestore 中的所有订单
+async function clearAllOrdersFromFirestore() {
+    if (!firestoreDB) {
+        throw new Error('Firestore not initialized');
     }
+    
+    return withRetry(async () => {
+        // 获取所有订单文档
+        const snapshot = await firestoreDB.collection(COLLECTION_ORDERS).get();
+        
+        if (snapshot.empty) {
+            console.log('No orders to clear in Firestore');
+            return true;
+        }
+        
+        const docs = snapshot.docs;
+        const BATCH_SIZE = 500; // Firestore batch limit
+        let totalDeleted = 0;
+        
+        // 分批删除（每批最多500个文档）
+        for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+            const batch = firestoreDB.batch();
+            const batchDocs = docs.slice(i, i + BATCH_SIZE);
+            
+            batchDocs.forEach(doc => {
+                batch.delete(doc.ref);
+            });
+            
+            await batch.commit();
+            totalDeleted += batchDocs.length;
+            console.log(`Cleared batch: ${batchDocs.length} orders (${totalDeleted}/${docs.length} total)`);
+        }
+        
+        console.log('✅ Cleared all', totalDeleted, 'orders from Firestore');
+        return true;
+    }, 3, 1000).catch(error => {
+        console.error('Failed to clear orders from Firestore:', error);
+        throw error;
+    });
 }
 
 // 监听菜单项变化（实时同步）
@@ -266,6 +445,139 @@ function subscribeToMenuItems(callback) {
     
     // 用于存储当前活动的取消订阅函数
     let currentUnsubscribe = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    
+    // 设置回退监听器（不使用 orderBy）
+    const setupFallbackListener = () => {
+        // 先取消当前的监听（如果存在）
+        if (currentUnsubscribe) {
+            try {
+                currentUnsubscribe();
+            } catch (e) {
+                console.warn('Failed to unsubscribe previous listener:', e);
+            }
+        }
+        
+        // 设置不使用 orderBy 的监听
+        try {
+            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
+                .onSnapshot(
+                    (snapshot) => {
+                        reconnectAttempts = 0; // 重置重连计数
+                        processSnapshot(snapshot, 'no orderBy');
+                    },
+                    (fallbackError) => {
+                        console.error('❌ Error listening to menu items (fallback):', fallbackError);
+                        const isConnectionError = fallbackError.code === 'unavailable' || 
+                                                fallbackError.message.includes('ERR_CONNECTION_CLOSED') ||
+                                                fallbackError.message.includes('Failed to fetch');
+                        
+                        if (isConnectionError && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            console.warn(`⚠️ Connection error in fallback listener, retrying (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                            updateConnectionState('offline');
+                            setTimeout(() => {
+                                if (firestoreDB) {
+                                    firestoreDB.enableNetwork().then(() => {
+                                        updateConnectionState('online');
+                                        setupFallbackListener();
+                                    }).catch(err => {
+                                        console.error('Failed to re-enable network:', err);
+                                        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                                            callback([]);
+                                        }
+                                    });
+                                }
+                            }, 2000 * reconnectAttempts);
+                        } else {
+                            callback([]);
+                        }
+                    }
+                );
+            console.log('✅ Fallback listener set up successfully');
+        } catch (fallbackSetupError) {
+            console.error('❌ Failed to set up fallback listener:', fallbackSetupError);
+            callback([]);
+        }
+    };
+    
+    // 设置主监听器（使用 orderBy）
+    const setupListener = () => {
+        try {
+            console.log('🔍 Setting up real-time listener with orderBy...');
+            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
+                .orderBy('id')
+                .onSnapshot(
+                    (snapshot) => {
+                        reconnectAttempts = 0; // 重置重连计数
+                        processSnapshot(snapshot, 'orderBy');
+                    },
+                    (error) => {
+                        console.error('❌ Error listening to menu items with orderBy:', error);
+                        
+                        const isConnectionError = error.code === 'unavailable' || 
+                                                error.message.includes('ERR_CONNECTION_CLOSED') ||
+                                                error.message.includes('Failed to fetch') ||
+                                                error.message.includes('network');
+                        
+                        // 如果是连接错误，尝试重新连接
+                        if (isConnectionError) {
+                            console.warn('⚠️ Connection error detected, attempting to reconnect...');
+                            updateConnectionState('offline');
+                            
+                            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                                reconnectAttempts++;
+                                // 延迟重连
+                                setTimeout(() => {
+                                    if (firestoreDB) {
+                                        firestoreDB.enableNetwork().then(() => {
+                                            console.log(`✅ Network re-enabled (attempt ${reconnectAttempts}), retrying listener...`);
+                                            updateConnectionState('online');
+                                            // 重新设置监听
+                                            if (currentUnsubscribe) {
+                                                try {
+                                                    currentUnsubscribe();
+                                                } catch (e) {
+                                                    console.warn('Failed to unsubscribe:', e);
+                                                }
+                                            }
+                                            setupListener();
+                                        }).catch(err => {
+                                            console.error('❌ Failed to re-enable network:', err);
+                                            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                                                setupFallbackListener();
+                                            }
+                                        });
+                                    }
+                                }, 2000 * reconnectAttempts);
+                                return;
+                            } else {
+                                console.warn('⚠️ Max reconnection attempts reached, falling back to no orderBy...');
+                                setupFallbackListener();
+                                return;
+                            }
+                        }
+                        
+                        // 如果 orderBy 失败（可能是缺少索引），尝试不使用 orderBy
+                        if (error.code === 'failed-precondition' || 
+                            error.message.includes('index') || 
+                            error.message.includes('requires an index')) {
+                            console.warn('⚠️ orderBy failed, setting up listener without orderBy...');
+                            setupFallbackListener();
+                        } else {
+                            // 其他类型的错误，也尝试设置不使用 orderBy 的监听
+                            console.warn('⚠️ Unexpected error, trying fallback listener...');
+                            setupFallbackListener();
+                        }
+                    }
+                );
+            console.log('✅ Real-time listener with orderBy set up successfully');
+        } catch (error) {
+            console.error('❌ Failed to set up real-time listener:', error);
+            setupFallbackListener();
+        }
+    };
     
     // 处理快照数据的通用函数
     const processSnapshot = (snapshot, source) => {
@@ -299,100 +611,8 @@ function subscribeToMenuItems(callback) {
         callback(items);
     };
     
-    // 尝试使用 orderBy 监听
-    try {
-        console.log('🔍 Setting up real-time listener with orderBy...');
-        currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
-            .orderBy('id')
-            .onSnapshot(
-                (snapshot) => {
-                    processSnapshot(snapshot, 'orderBy');
-                },
-                (error) => {
-                    console.error('❌ Error listening to menu items with orderBy:', error);
-                    // 如果 orderBy 失败（可能是缺少索引），尝试不使用 orderBy
-                    if (error.code === 'failed-precondition' || 
-                        error.message.includes('index') || 
-                        error.message.includes('requires an index')) {
-                        console.warn('⚠️ orderBy failed, setting up listener without orderBy...');
-                        
-                        // 先取消当前的监听（如果存在）
-                        if (currentUnsubscribe) {
-                            try {
-                                currentUnsubscribe();
-                            } catch (e) {
-                                console.warn('Failed to unsubscribe previous listener:', e);
-                            }
-                        }
-                        
-                        // 设置不使用 orderBy 的监听
-                        try {
-                            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
-                                .onSnapshot(
-                                    (snapshot) => {
-                                        processSnapshot(snapshot, 'no orderBy');
-                                    },
-                                    (fallbackError) => {
-                                        console.error('❌ Error listening to menu items (fallback):', fallbackError);
-                                        // 即使失败也尝试调用回调，使用空数组
-                                        callback([]);
-                                    }
-                                );
-                            console.log('✅ Fallback listener set up successfully');
-                        } catch (fallbackSetupError) {
-                            console.error('❌ Failed to set up fallback listener:', fallbackSetupError);
-                            callback([]);
-                        }
-                    } else {
-                        // 其他类型的错误，也尝试设置不使用 orderBy 的监听
-                        console.warn('⚠️ Unexpected error, trying fallback listener...');
-                        if (currentUnsubscribe) {
-                            try {
-                                currentUnsubscribe();
-                            } catch (e) {
-                                console.warn('Failed to unsubscribe:', e);
-                            }
-                        }
-                        try {
-                            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
-                                .onSnapshot(
-                                    (snapshot) => {
-                                        processSnapshot(snapshot, 'fallback');
-                                    },
-                                    (fallbackError) => {
-                                        console.error('❌ Fallback listener also failed:', fallbackError);
-                                        callback([]);
-                                    }
-                                );
-                        } catch (e) {
-                            console.error('❌ Complete failure setting up listener:', e);
-                            callback([]);
-                        }
-                    }
-                }
-            );
-        console.log('✅ Real-time listener with orderBy set up successfully');
-    } catch (error) {
-        console.error('❌ Failed to set up real-time listener:', error);
-        // 如果完全失败，尝试设置不使用 orderBy 的监听
-        try {
-            console.log('🔄 Attempting to set up listener without orderBy...');
-            currentUnsubscribe = firestoreDB.collection(COLLECTION_MENU)
-                .onSnapshot(
-                    (snapshot) => {
-                        processSnapshot(snapshot, 'direct');
-                    },
-                    (directError) => {
-                        console.error('❌ Direct listener also failed:', directError);
-                        callback([]);
-                    }
-                );
-            console.log('✅ Direct listener set up successfully');
-        } catch (directError) {
-            console.error('❌ Complete failure:', directError);
-            return () => {};
-        }
-    }
+    // 开始设置监听器
+    setupListener();
     
     // 返回取消订阅函数
     return () => {
