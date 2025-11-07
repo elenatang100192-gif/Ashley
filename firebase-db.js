@@ -75,7 +75,28 @@ async function saveMenuItemsToFirestore(items) {
         return true;
     } catch (error) {
         console.error('Failed to save menu items to Firestore:', error);
-        throw error;
+        
+        // 提供更友好的错误信息
+        let errorMessage = error.message || '保存失败';
+        
+        // 检测常见错误类型
+        if (error.code === 'permission-denied') {
+            errorMessage = '权限被拒绝：请检查 Firestore 安全规则';
+        } else if (error.code === 'unavailable' || error.message.includes('network') || error.message.includes('Failed to fetch')) {
+            errorMessage = '网络错误：无法连接到 Firebase，请检查网络连接';
+        } else if (error.code === 'deadline-exceeded' || error.message.includes('timeout')) {
+            errorMessage = '操作超时：请检查网络连接后重试';
+        } else if (error.code === 'resource-exhausted' || error.message.includes('quota')) {
+            errorMessage = '配额超限：Firebase 免费额度可能已用完';
+        } else if (error.message.includes('image') || error.message.includes('size')) {
+            // 图片相关错误
+            errorMessage = error.message;
+        }
+        
+        const enhancedError = new Error(errorMessage);
+        enhancedError.originalError = error;
+        enhancedError.code = error.code;
+        throw enhancedError;
     }
 }
 

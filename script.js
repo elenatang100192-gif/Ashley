@@ -509,47 +509,92 @@ function compressImage(file, maxWidth = 600, maxHeight = 600, quality = 0.75) {
                                 return;
                             }
                             
-                            // Convert to blob with error handling
-                            canvas.toBlob(function(blob) {
-                                try {
-                                    if (!blob) {
-                                        reject(new Error('Image compression failed, please try a different image format'));
-                                        return;
-                                    }
-                                    
-                                    // Check blob size (max 5MB after compression)
-                                    const maxBlobSize = 5 * 1024 * 1024; // 5MB
-                                    if (blob.size > maxBlobSize) {
-                                        // Try with lower quality
-                                        canvas.toBlob(function(blob2) {
-                                            if (blob2 && blob2.size <= maxBlobSize) {
-                                                const reader2 = new FileReader();
-                                                reader2.onload = function(e2) {
-                                                    resolve(e2.target.result);
-                                                };
-                                                reader2.onerror = function(err) {
-                                                    reject(new Error('Image read failed: ' + (err.message || 'Unknown error')));
-                                                };
-                                                reader2.readAsDataURL(blob2);
+                            // Convert to blob with error handling and mobile fallback
+                            // 检查是否支持 toBlob（某些旧版移动浏览器不支持）
+                            if (typeof canvas.toBlob === 'function') {
+                                // 使用 toBlob（更高效）
+                                canvas.toBlob(function(blob) {
+                                    try {
+                                        if (!blob) {
+                                            // 如果 toBlob 失败，回退到 toDataURL
+                                            console.warn('toBlob returned null, falling back to toDataURL');
+                                            const dataURL = canvas.toDataURL('image/jpeg', quality);
+                                            // 检查数据 URL 大小
+                                            const dataSize = (dataURL.length * 3) / 4; // 近似大小
+                                            const maxSize = 5 * 1024 * 1024; // 5MB
+                                            if (dataSize > maxSize) {
+                                                // 尝试更低质量
+                                                const lowerQualityDataURL = canvas.toDataURL('image/jpeg', 0.6);
+                                                const lowerSize = (lowerQualityDataURL.length * 3) / 4;
+                                                if (lowerSize <= maxSize) {
+                                                    resolve(lowerQualityDataURL);
+                                                } else {
+                                                    reject(new Error('图片压缩后仍然太大，请使用更小的图片'));
+                                                }
                                             } else {
-                                                reject(new Error('Image is still too large after compression, please use a smaller image'));
+                                                resolve(dataURL);
                                             }
-                                        }, 'image/jpeg', 0.6);
-                                        return;
+                                            return;
+                                        }
+                                        
+                                        // Check blob size (max 5MB after compression)
+                                        const maxBlobSize = 5 * 1024 * 1024; // 5MB
+                                        if (blob.size > maxBlobSize) {
+                                            // Try with lower quality
+                                            canvas.toBlob(function(blob2) {
+                                                if (blob2 && blob2.size <= maxBlobSize) {
+                                                    const reader2 = new FileReader();
+                                                    reader2.onload = function(e2) {
+                                                        resolve(e2.target.result);
+                                                    };
+                                                    reader2.onerror = function(err) {
+                                                        reject(new Error('图片读取失败: ' + (err.message || '未知错误')));
+                                                    };
+                                                    reader2.readAsDataURL(blob2);
+                                                } else {
+                                                    reject(new Error('图片压缩后仍然太大，请使用更小的图片'));
+                                                }
+                                            }, 'image/jpeg', 0.6);
+                                            return;
+                                        }
+                                        
+                                        const reader2 = new FileReader();
+                                        reader2.onload = function(e2) {
+                                            resolve(e2.target.result);
+                                        };
+                                        reader2.onerror = function(err) {
+                                            reject(new Error('图片读取失败: ' + (err.message || '未知错误')));
+                                        };
+                                        reader2.readAsDataURL(blob);
+                                    } catch (blobError) {
+                                        reject(new Error('图片处理失败: ' + blobError.message));
                                     }
+                                }, 'image/jpeg', quality);
+                            } else {
+                                // 回退到 toDataURL（移动端兼容性更好）
+                                console.log('toBlob not supported, using toDataURL fallback');
+                                try {
+                                    const dataURL = canvas.toDataURL('image/jpeg', quality);
+                                    // 检查数据 URL 大小（近似）
+                                    const dataSize = (dataURL.length * 3) / 4; // Base64 编码大小约为原始大小的 4/3
+                                    const maxSize = 5 * 1024 * 1024; // 5MB
                                     
-                                    const reader2 = new FileReader();
-                                    reader2.onload = function(e2) {
-                                        resolve(e2.target.result);
-                                    };
-                                    reader2.onerror = function(err) {
-                                        reject(new Error('Image read failed: ' + (err.message || 'Unknown error')));
-                                    };
-                                    reader2.readAsDataURL(blob);
-                                } catch (blobError) {
-                                    reject(new Error('Image processing failed: ' + blobError.message));
+                                    if (dataSize > maxSize) {
+                                        // 尝试更低质量
+                                        const lowerQualityDataURL = canvas.toDataURL('image/jpeg', 0.6);
+                                        const lowerSize = (lowerQualityDataURL.length * 3) / 4;
+                                        if (lowerSize <= maxSize) {
+                                            resolve(lowerQualityDataURL);
+                                        } else {
+                                            reject(new Error('图片压缩后仍然太大，请使用更小的图片'));
+                                        }
+                                    } else {
+                                        resolve(dataURL);
+                                    }
+                                } catch (dataURLError) {
+                                    reject(new Error('图片转换失败: ' + dataURLError.message));
                                 }
-                            }, 'image/jpeg', quality);
+                            }
                         } catch (imgLoadError) {
                             clearTimeout(imgTimeout);
                             reject(new Error('Image processing error: ' + imgLoadError.message));
@@ -997,9 +1042,35 @@ async function addMenuItem() {
         return;
     }
     
-    // Compress and add item
+    // Compress and add item with timeout protection
+    // 添加超时保护，防止移动端一直显示 Processing
+    const OPERATION_TIMEOUT = 60000; // 60秒超时
+    let operationCompleted = false;
+    
+    const timeoutId = setTimeout(() => {
+        if (!operationCompleted) {
+            operationCompleted = true;
+            console.error('❌ Add item operation timeout');
+            addBtn.disabled = false;
+            addBtn.textContent = originalText;
+            alert('操作超时，请检查网络连接后重试。\n\n如果问题持续，请尝试：\n1. 使用更小的图片\n2. 切换到 WiFi 网络\n3. 刷新页面后重试');
+        }
+    }, OPERATION_TIMEOUT);
+    
+    // 确保按钮状态恢复的辅助函数
+    const restoreButton = () => {
+        if (!operationCompleted) {
+            operationCompleted = true;
+            clearTimeout(timeoutId);
+            addBtn.disabled = false;
+            addBtn.textContent = originalText;
+        }
+    };
+    
     compressImage(imageFile)
         .then(async (compressedData) => {
+            if (operationCompleted) return; // 如果已经超时，不再继续
+            
             console.log('Image compressed successfully'); // Debug log
             
             const newItem = {
@@ -1014,9 +1085,21 @@ async function addMenuItem() {
             
             menuItems.push(newItem);
             
-            // Try to save to storage
+            // Try to save to storage with timeout protection
             try {
-                await saveMenuToStorage();
+                // 为 Firebase 保存添加超时保护
+                const savePromise = saveMenuToStorage();
+                const saveTimeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('保存超时，请检查网络连接')), 30000)
+                );
+                
+                await Promise.race([savePromise, saveTimeoutPromise]);
+                
+                if (operationCompleted) {
+                    menuItems.pop(); // 如果超时了，移除已添加的项
+                    return;
+                }
+                
                 console.log('✅ Menu saved to storage:', menuItems.length, 'items');
                 console.log('💡 Real-time listener will automatically update the display when Firebase syncs');
                 
@@ -1032,12 +1115,26 @@ async function addMenuItem() {
             } catch (e) {
                 // If storage fails, remove the item and show error
                 menuItems.pop();
-                addBtn.disabled = false;
-                addBtn.textContent = originalText;
-                alert('Save failed: ' + (e.message || 'Insufficient storage space. Please delete some menu items or use smaller images.'));
+                restoreButton();
+                
+                // 移动端特定的错误提示
+                const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                let errorMsg = e.message || '保存失败';
+                
+                if (isMobile) {
+                    if (errorMsg.includes('timeout') || errorMsg.includes('超时') || errorMsg.includes('network')) {
+                        errorMsg = '网络连接超时，请检查：\n1. WiFi 或移动网络连接\n2. 切换到更稳定的网络\n3. 刷新页面后重试';
+                    } else if (errorMsg.includes('permission') || errorMsg.includes('权限')) {
+                        errorMsg = '权限错误，请检查 Firebase 配置';
+                    }
+                }
+                
+                alert('保存失败: ' + errorMsg + '\n\n请尝试：\n1. 使用更小的图片文件\n2. 检查网络连接\n3. 刷新页面后重试');
                 console.error('❌ Storage error:', e);
                 return;
             }
+            
+            if (operationCompleted) return; // 如果已经超时，不再继续
             
             // Clear form
             document.getElementById('itemCategory').value = '';
@@ -1058,17 +1155,31 @@ async function addMenuItem() {
             renderItemsList();
             
             // Re-enable button
-            addBtn.disabled = false;
-            addBtn.textContent = originalText;
+            restoreButton();
             
-            alert('Add successful!');
+            alert('添加成功！');
         })
         .catch(error => {
+            if (operationCompleted) return; // 如果已经超时，不再处理
+            
             console.error('Add item error:', error);
-            const errorMsg = error && error.message ? error.message : 'Image processing error';
-            alert('Add failed: ' + errorMsg + '\n\nPlease try:\n1. Use a smaller image file\n2. Use JPG or PNG format\n3. Check if the image is corrupted\n4. Refresh the page and try again');
-            addBtn.disabled = false;
-            addBtn.textContent = originalText;
+            restoreButton();
+            
+            // 移动端特定的错误提示
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            let errorMsg = error && error.message ? error.message : '图片处理错误';
+            
+            if (isMobile) {
+                if (errorMsg.includes('timeout') || errorMsg.includes('超时')) {
+                    errorMsg = '图片处理超时，请尝试使用更小的图片';
+                } else if (errorMsg.includes('memory') || errorMsg.includes('内存')) {
+                    errorMsg = '内存不足，请使用更小的图片';
+                } else if (errorMsg.includes('canvas') || errorMsg.includes('context')) {
+                    errorMsg = '浏览器不支持图片处理，请尝试其他浏览器';
+                }
+            }
+            
+            alert('添加失败: ' + errorMsg + '\n\n请尝试：\n1. 使用更小的图片文件（建议小于 5MB）\n2. 使用 JPG 或 PNG 格式\n3. 检查图片是否损坏\n4. 刷新页面后重试');
         });
 }
 
