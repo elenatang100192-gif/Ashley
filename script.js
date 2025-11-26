@@ -1814,6 +1814,38 @@ function backToMenu() {
     document.getElementById('viewMenuBtn').style.display = 'none';
 }
 
+// Helper function to get timestamp from order for sorting
+function getOrderTimestamp(order) {
+    // Priority 1: Use createdAt if it's a Firestore Timestamp
+    if (order.createdAt) {
+        if (order.createdAt.toMillis) {
+            return order.createdAt.toMillis();
+        }
+        if (order.createdAt.seconds) {
+            return order.createdAt.seconds * 1000;
+        }
+        if (typeof order.createdAt === 'number') {
+            return order.createdAt;
+        }
+    }
+    
+    // Priority 2: Use id if it's a timestamp
+    if (order.id && typeof order.id === 'number') {
+        return order.id;
+    }
+    
+    // Priority 3: Try to parse date string
+    if (order.date) {
+        const parsed = Date.parse(order.date);
+        if (!isNaN(parsed)) {
+            return parsed;
+        }
+    }
+    
+    // Fallback: return 0 (will appear first if sorting descending)
+    return 0;
+}
+
 // Render summary page
 function renderSummary() {
     const container = document.getElementById('summaryContent');
@@ -1825,8 +1857,12 @@ function renderSummary() {
     
     container.innerHTML = '';
     
-    // Display in reverse chronological order
-    const sortedOrders = [...allOrders].reverse();
+    // Sort by timestamp (newest first - descending order)
+    const sortedOrders = [...allOrders].sort((a, b) => {
+        const timeA = getOrderTimestamp(a);
+        const timeB = getOrderTimestamp(b);
+        return timeB - timeA; // Descending: newest first
+    });
     
     sortedOrders.forEach(order => {
         const orderGroup = document.createElement('div');
@@ -1869,8 +1905,12 @@ async function renderAllOrders(searchKeyword = '') {
         );
     }
     
-    // Display in reverse chronological order (newest first)
-    const sortedOrders = [...filteredOrders].reverse();
+    // Sort by timestamp (newest first - descending order)
+    const sortedOrders = [...filteredOrders].sort((a, b) => {
+        const timeA = getOrderTimestamp(a);
+        const timeB = getOrderTimestamp(b);
+        return timeB - timeA; // Descending: newest first
+    });
     
     // Calculate total orders count (show filtered count if searching)
     const totalOrders = allOrders.length;
