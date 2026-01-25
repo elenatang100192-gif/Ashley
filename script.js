@@ -1432,13 +1432,53 @@ async function deleteMenuItem(itemId) {
 // Delete order
 async function deleteOrder(orderId) {
     if (confirm('Are you sure you want to delete this order? This action cannot be undone.')) {
-        allOrders = allOrders.filter(order => order.id !== orderId);
-        try {
-            await saveOrdersToStorage();
+        console.log('🗑️ Deleting order:', orderId);
+        console.log('📋 Orders before deletion:', allOrders.length);
+        
+        // Set flag to prevent renderAllOrders from reloading during delete
+        window._isDeletingOrder = true;
+        
+        // Filter out the order to delete
+        const orderToDelete = allOrders.find(order => order.id === orderId);
+        if (!orderToDelete) {
+            console.warn('⚠️ Order not found:', orderId);
+            window._isDeletingOrder = false;
+            alert('Order not found. It may have already been deleted.');
+            // Reload orders to refresh display
+            await loadOrdersFromStorage();
             renderAllOrders();
+            return;
+        }
+        
+        allOrders = allOrders.filter(order => order.id !== orderId);
+        console.log('📋 Orders after deletion:', allOrders.length);
+        
+        try {
+            // Save the updated orders list
+            await saveOrdersToStorage();
+            console.log('✅ Orders saved after deletion');
+            
+            // Clear the flag
+            window._isDeletingOrder = false;
+            
+            // Wait a bit to ensure Firebase sync completes (if using Firebase)
+            if (USE_FIREBASE) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+            
+            // Render the updated orders list (without reloading from storage)
+            renderAllOrders();
+            
+            console.log('✅ Order deleted successfully');
         } catch (e) {
-            console.error('Failed to delete order:', e);
-            alert('Failed to delete order. Please try again.');
+            console.error('❌ Failed to delete order:', e);
+            window._isDeletingOrder = false;
+            // Restore the order if save failed
+            allOrders.push(orderToDelete);
+            alert('Failed to delete order. Please try again.\n\nError: ' + (e.message || e));
+            // Reload to show correct state
+            await loadOrdersFromStorage();
+            renderAllOrders();
         }
     }
 }
@@ -2097,7 +2137,10 @@ async function renderAllOrders(searchKeyword = '') {
     const container = document.getElementById('ordersContent');
     
     // Reload orders from storage to get latest data
-    await loadOrdersFromStorage();
+    // But skip reload if we're in the middle of a delete operation to avoid overriding the deletion
+    if (!window._isDeletingOrder) {
+        await loadOrdersFromStorage();
+    }
     
     if (allOrders.length === 0) {
         container.innerHTML = '<div class="empty-message">No orders yet</div>';
