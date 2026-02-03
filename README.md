@@ -11,144 +11,252 @@ A static web application for displaying menus and supporting multiple users to s
 - 📥 **Data Export**: Download all selection records (including name and order fields)
 - 🖼️ **Image Management**: Upload and manage dish images
 - 📊 **Order Management**: View and manage all orders
+- 🔒 **Password Protection**: Manage Menu requires password (default: ashley)
+- 🏪 **Restaurant Filtering**: Filter menu items by restaurant
+- 👁️ **Restaurant Visibility**: Hide/show restaurants from menu
 
 ## Usage
 
-1. Open `index.html` file directly in your browser
-2. Browse the menu and click dishes to select them
-3. After selecting dishes, enter your name
-4. Click the "Confirm" button to submit your selection
-5. View everyone's selections on the summary page
-6. Click the "Download" button in the top right corner to export data (CSV format)
-7. Use "Manage Menu" to add, edit, or delete menu items
-8. Use "View Orders" to see all past orders
+1. **Start API Server** (required for MySQL mode):
+   ```bash
+   node api-server.js
+   ```
+   The API server will run on `http://localhost:3000`
+
+2. **Open Application**:
+   - Open `http://localhost:3000/index.html` in your browser
+   - Or open `index.html` directly (for local storage mode)
+
+3. **Browse Menu**:
+   - Browse the menu and click dishes to select them
+   - Use restaurant filter to filter by restaurant
+
+4. **Submit Order**:
+   - After selecting dishes, enter your name
+   - Click the "Confirm" button to submit your selection
+
+5. **Manage Data**:
+   - Click "View Orders" to see all past orders
+   - Click "Manage Menu" (password: ashley) to add, edit, or delete menu items
+   - Use "Download" button to export data (CSV format)
 
 ## File Structure
 
 ```
 menu/
-├── README.md          # Project documentation
-├── index.html         # Main page
-├── styles.css         # Stylesheet
-├── script.js          # Functionality script
-├── firebase-config.js # Firebase configuration (for data sharing)
-├── firebase-db.js     # Firebase database operations
-└── 星美乐Menu (1).pdf # Original menu PDF
+├── README.md              # Project documentation
+├── index.html             # Main page
+├── styles.css             # Stylesheet
+├── script.js              # Main application logic
+├── mysql-db.js            # MySQL database operations (frontend)
+├── api-server.js          # Node.js Express API server
+├── mysql-schema.sql       # MySQL database schema
+├── package.json           # Node.js dependencies
+├── firebase-config.js     # Firebase configuration (legacy, not used)
+├── firebase-db.js         # Firebase database operations (legacy, not used)
+└── docs/                  # Documentation files
+    ├── MIGRATION_COMPLETE.md
+    ├── MYSQL_MIGRATION.md
+    └── ...
 ```
+
+## Data Storage
+
+### Current: MySQL Database (via API Server)
+
+- **Backend**: Node.js Express API server
+- **Database**: MySQL
+- **Features**:
+  - ✅ Multi-user data sharing
+  - ✅ Centralized data storage
+  - ✅ Polling-based synchronization (2 second interval)
+  - ✅ Reliable and scalable
+
+### Configuration
+
+**API Server Configuration** (`api-server.js`):
+```javascript
+const dbConfig = {
+    host: '116.6.239.70',
+    port: 20010,
+    database: 'order_menu',
+    user: 'u_order_menu',
+    password: 'Gj9U#ERCarH-SZFGjUpvk9b',
+    charset: 'utf8mb4'
+};
+```
+
+**Frontend Configuration** (`script.js`):
+```javascript
+const USE_MYSQL = true;  // Enable MySQL mode
+const USE_FIREBASE = false;  // Disable Firebase
+```
+
+**API Base URL** (`mysql-db.js`):
+```javascript
+API_BASE_URL: '/api'  // For localhost
+// For production: 'https://your-api-server.com/api'
+```
+
+## Setup Instructions
+
+### 1. Install Dependencies
+
+```bash
+npm install
+```
+
+### 2. Create Database Tables
+
+```bash
+mysql -h 116.6.239.70 -P 20010 -u u_order_menu -p order_menu < mysql-schema.sql
+```
+
+Or use the test script:
+```bash
+node test-db-connection.js
+```
+
+### 3. Start API Server
+
+```bash
+node api-server.js
+```
+
+The server will start on `http://localhost:3000`
+
+### 4. Open Application
+
+Open `http://localhost:3000/index.html` in your browser.
+
+## API Endpoints
+
+- `GET /api/health` - Health check
+- `GET /api/menu-items` - Get all menu items
+- `POST /api/menu-items` - Save menu items
+- `GET /api/orders` - Get all orders
+- `POST /api/orders` - Save single order
+- `POST /api/orders/batch` - Save multiple orders
+- `DELETE /api/orders/:id` - Delete order
+- `DELETE /api/orders` - Clear all orders
+- `GET /api/settings/hiddenRestaurants` - Get hidden restaurants
+- `PUT /api/settings/hiddenRestaurants` - Save hidden restaurants
 
 ## Customizing Menu
 
-To modify menu content, edit the `menuItems` array in `script.js` file, format as follows:
+### Via Web Interface (Recommended)
+
+1. Click "Manage Menu" button
+2. Enter password: `ashley`
+3. Use "Add Item" form to add new items
+4. Click edit/delete buttons to modify existing items
+
+### Via Code
+
+Edit the `menuItems` array in `script.js` file:
 
 ```javascript
 const menuItems = [
-  { id: 1, name: 'Dish Name', category: 'Category', price: 'Price', image: 'base64...' },
+  { id: 1, name: 'Dish Name', category: 'Category', tag: 'Restaurant', price: 'Price', image: 'base64...' },
   // ... more dishes
 ];
 ```
 
-Or use the "Manage Menu" interface to add, edit, or delete items through the web interface.
+## Production Deployment
 
-## Data Storage Options
+### 1. Deploy API Server
 
-### Option 1: Local Storage (Default)
-- **IndexedDB**: Primary storage for menu items and orders
-- **localStorage**: Fallback storage
-- **特点**: 数据存储在浏览器本地，每个用户看到的数据独立
-- **适用场景**: 单用户使用，不需要数据共享
+Deploy `api-server.js` to a hosting service:
+- Heroku
+- Railway
+- DigitalOcean
+- AWS EC2
+- Any Node.js hosting service
 
-### Option 2: Firebase Firestore (Data Sharing)
-- **Firebase Firestore**: 云端数据库，支持多人数据共享
-- **特点**: 
-  - ✅ 多人实时同步数据
-  - ✅ 所有用户看到相同的数据
-  - ✅ 实时更新（无需刷新页面）
-  - ✅ 免费额度充足（适合小型应用）
-- **适用场景**: 需要多人协作，共享菜单和订单数据
+### 2. Update Frontend Configuration
 
-### 如何启用 Firebase 数据共享
+Update `mysql-db.js`:
+```javascript
+API_BASE_URL: 'https://your-api-server.com/api'
+```
 
-1. **创建 Firebase 项目**
-   - 访问 [Firebase Console](https://console.firebase.google.com/)
-   - 点击 "Add project" 创建新项目
-   - 按照向导完成项目创建
+### 3. Update Database Credentials
 
-2. **启用 Firestore Database**
-   - 在 Firebase Console 中，点击左侧菜单的 "Firestore Database"
-   - 点击 "Create database"
-   - 选择 "Start in test mode"（测试模式，适合开发）
-   - 选择数据库位置（建议选择离您最近的区域）
+Update MySQL credentials in `api-server.js` if needed.
 
-3. **获取 Firebase 配置信息**
-   - 在 Firebase Console 中，点击项目设置（齿轮图标）
-   - 滚动到 "Your apps" 部分
-   - 点击 Web 图标（</>）添加 Web 应用
-   - 输入应用昵称，点击 "Register app"
-   - 复制配置信息（firebaseConfig 对象）
+### 4. Test Production
 
-4. **配置应用**
-   - 打开 `firebase-config.js` 文件
-   - 将 Firebase 配置信息替换到 `firebaseConfig` 对象中：
-   ```javascript
-   const firebaseConfig = {
-       apiKey: "YOUR_API_KEY",
-       authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-       projectId: "YOUR_PROJECT_ID",
-       storageBucket: "YOUR_PROJECT_ID.appspot.com",
-       messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-       appId: "YOUR_APP_ID"
-   };
-   ```
+- Test all functionality
+- Monitor API server logs
+- Check database connections
 
-5. **启用 Firebase 模式**
-   - 打开 `script.js` 文件
-   - 找到第 36 行：`const USE_FIREBASE = false;`
-   - 改为：`const USE_FIREBASE = true;`
+## Migration from Firestore
 
-6. **设置 Firestore 安全规则（重要）**
-   - 在 Firebase Console 中，进入 Firestore Database
-   - 点击 "Rules" 标签
-   - 将规则设置为（允许所有人读写，适合内部使用）：
-   ```javascript
-   rules_version = '2';
-   service cloud.firestore {
-     match /databases/{database}/documents {
-       match /{document=**} {
-         allow read, write: if true;
-       }
-     }
-   }
-   ```
-   - 点击 "Publish" 发布规则
+If you have existing Firestore data, use the migration tool:
 
-7. **测试**
-   - 打开 `index.html` 在浏览器中
-   - 打开浏览器控制台（F12），应该看到 "Firebase initialized and real-time sync enabled"
-   - 添加一个菜单项，在其他设备/浏览器中打开应该能看到实时更新
+1. Open `http://localhost:3000/quick-migrate.html`
+2. Click "Start Migration"
+3. Wait for migration to complete
 
-### 数据迁移
-
-- **从本地存储迁移到 Firebase**: 
-  - 启用 Firebase 后，首次加载会自动从 IndexedDB 读取数据
-  - 添加或修改数据时会自动保存到 Firebase
-  - 建议先导出本地数据作为备份
-
-- **从 Firebase 迁移到本地存储**:
-  - 将 `USE_FIREBASE` 改回 `false`
-  - 使用 "Export All Data" 功能导出 Firebase 数据
-  - 使用 "Import Data" 功能导入到本地存储
+Or use the export/import scripts:
+- `export-firestore-data.html` - Export from Firestore
+- `migrate-from-json.js` - Import to MySQL
 
 ## Technical Details
 
-- Pure static page, no server required
-- **Local Storage**: IndexedDB + localStorage (default)
-- **Cloud Storage**: Firebase Firestore (optional, for data sharing)
-- Supports CSV format export
-- Responsive design, supports mobile devices
-- Image compression and storage
-- Order history management
-- Real-time data synchronization (with Firebase)
+- **Frontend**: Pure HTML/CSS/JavaScript (static)
+- **Backend**: Node.js Express API server
+- **Database**: MySQL
+- **Synchronization**: Polling (2 second interval)
+- **Image Storage**: Base64 encoded in database
+- **Export Format**: CSV
+- **Responsive Design**: Supports mobile devices
 
 ## Browser Compatibility
 
-Supports all modern browsers (Chrome, Firefox, Safari, Edge)
+Supports all modern browsers:
+- Chrome (recommended)
+- Firefox
+- Safari
+- Edge
+
+## Troubleshooting
+
+### API Server Not Responding
+
+```bash
+# Check if server is running
+ps aux | grep "node api-server"
+
+# Restart server
+pkill -f "node api-server.js"
+node api-server.js
+```
+
+### Database Connection Failed
+
+1. Check MySQL credentials in `api-server.js`
+2. Verify MySQL server is accessible
+3. Check firewall rules
+
+### No Menu Data Displayed
+
+1. Check browser console (F12) for errors
+2. Verify API server is running
+3. Check `/api/menu-items` endpoint
+4. Clear browser cache and refresh
+
+### Migration Issues
+
+See `MYSQL_MIGRATION.md` for detailed migration guide.
+
+## Security Notes
+
+- **Password Protection**: Manage Menu requires password (default: `ashley`)
+- **API Security**: Consider adding authentication for production
+- **Database Security**: Use strong passwords and restrict access
+- **HTTPS**: Use HTTPS in production
+
+## License
+
+This project is for internal use only.

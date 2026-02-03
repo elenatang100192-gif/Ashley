@@ -37,7 +37,29 @@ let hiddenRestaurants = [];
 const HIDDEN_RESTAURANTS_KEY = 'hiddenRestaurants';
 
 async function loadHiddenRestaurants() {
-    if (USE_FIREBASE) {
+    if (USE_MYSQL) {
+        try {
+            // Load from MySQL
+            const restaurants = await loadHiddenRestaurantsFromMySQL();
+            hiddenRestaurants = restaurants;
+            console.log('✅ Hidden restaurants loaded from MySQL:', hiddenRestaurants.length, 'restaurants:', hiddenRestaurants);
+        } catch (e) {
+            console.error('Failed to load hidden restaurants from MySQL:', e);
+            // Fallback to localStorage
+            try {
+                const stored = localStorage.getItem(HIDDEN_RESTAURANTS_KEY);
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed)) {
+                        hiddenRestaurants = parsed.filter(name => typeof name === 'string' && name.trim());
+                    }
+                }
+            } catch (localError) {
+                console.error('Failed to load from localStorage fallback:', localError);
+                hiddenRestaurants = [];
+            }
+        }
+    } else if (USE_FIREBASE) {
         try {
             // 从 Firebase 加载
             const restaurants = await loadHiddenRestaurantsFromFirestore();
@@ -61,27 +83,41 @@ async function loadHiddenRestaurants() {
         }
     } else {
         // 使用 localStorage
-        try {
-            const stored = localStorage.getItem(HIDDEN_RESTAURANTS_KEY);
-            if (!stored) {
-                hiddenRestaurants = [];
-                return;
-            }
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed)) {
-                hiddenRestaurants = parsed.filter(name => typeof name === 'string' && name.trim());
-            } else {
-                hiddenRestaurants = [];
-            }
-        } catch (e) {
-            console.error('Failed to load hidden restaurants from localStorage:', e);
+    try {
+        const stored = localStorage.getItem(HIDDEN_RESTAURANTS_KEY);
+        if (!stored) {
             hiddenRestaurants = [];
+            return;
+        }
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+            hiddenRestaurants = parsed.filter(name => typeof name === 'string' && name.trim());
+        } else {
+            hiddenRestaurants = [];
+        }
+    } catch (e) {
+        console.error('Failed to load hidden restaurants from localStorage:', e);
+        hiddenRestaurants = [];
         }
     }
 }
 
 async function saveHiddenRestaurants() {
-    if (USE_FIREBASE) {
+    if (USE_MYSQL) {
+        try {
+            // Save to MySQL
+            await saveHiddenRestaurantsToMySQL(hiddenRestaurants);
+            console.log('✅ Hidden restaurants saved to MySQL');
+        } catch (e) {
+            console.error('Failed to save hidden restaurants to MySQL:', e);
+            // Fallback to localStorage
+            try {
+                localStorage.setItem(HIDDEN_RESTAURANTS_KEY, JSON.stringify(hiddenRestaurants));
+            } catch (localError) {
+                console.error('Failed to save to localStorage fallback:', localError);
+            }
+        }
+    } else if (USE_FIREBASE) {
         try {
             // 保存到 Firebase
             await saveHiddenRestaurantsToFirestore(hiddenRestaurants);
@@ -97,10 +133,10 @@ async function saveHiddenRestaurants() {
         }
     } else {
         // 使用 localStorage
-        try {
-            localStorage.setItem(HIDDEN_RESTAURANTS_KEY, JSON.stringify(hiddenRestaurants));
-        } catch (e) {
-            console.error('Failed to save hidden restaurants to localStorage:', e);
+    try {
+        localStorage.setItem(HIDDEN_RESTAURANTS_KEY, JSON.stringify(hiddenRestaurants));
+    } catch (e) {
+        console.error('Failed to save hidden restaurants to localStorage:', e);
         }
     }
 }
@@ -112,8 +148,12 @@ function isRestaurantHidden(restaurantName) {
     return hiddenRestaurants.some(hidden => String(hidden).trim() === normalizedName);
 }
 
-// 数据库配置：设置为 true 使用 Firebase，false 使用 IndexedDB（本地存储）
-const USE_FIREBASE = true; // 改为 true 启用 Firebase 数据共享
+// Database configuration: 
+// USE_FIREBASE = true: Use Firebase Firestore
+// USE_MYSQL = true: Use MySQL (requires API server)
+// Both false: Use IndexedDB (local storage)
+const USE_FIREBASE = false; // Set to false to disable Firebase
+const USE_MYSQL = true; // Set to true to enable MySQL (requires API server)
 
 // IndexedDB database instance
 let db = null;
@@ -436,6 +476,122 @@ document.addEventListener('DOMContentLoaded', async function() {
                 menuItems = [];
                 allOrders = [];
                 // Don't return, continue to bind event listeners
+            }
+        } else if (USE_MYSQL) {
+            // Use MySQL (via API server)
+            console.log('Using MySQL (via API server)...');
+            
+            try {
+                console.log('Initializing MySQL connection...');
+                await initMySQL();
+                console.log('✅ MySQL initialized');
+                
+                const LOAD_TIMEOUT = 30000; // 30 seconds timeout
+                let menuLoadError = null;
+                
+                try {
+                    console.log('Loading menu data from MySQL...');
+                    const loadPromise = loadMenuItemsFromMySQL();
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Data loading timeout (30 seconds). Please check your network connection or refresh the page to retry.')), LOAD_TIMEOUT)
+                    );
+                    
+                    menuItems = await Promise.race([loadPromise, timeoutPromise]);
+                    console.log('✅ Menu items loaded from MySQL:', menuItems.length, 'items');
+                    
+                    if (menuItems.length === 0) {
+                        console.warn('⚠️ Menu items array is empty - MySQL database may be empty');
+                        console.log('Tip: If this is the first time using, you need to add menu data first');
+        } else {
+                        console.log('Menu data sample:', menuItems.slice(0, 2));
+                    }
+                } catch (menuError) {
+                    console.error('❌ Failed to load menu items from MySQL:', menuError);
+                    menuItems = [];
+                    menuLoadError = menuError;
+                    
+                    const errorMsg = getErrorMessage(menuError, 'menu data');
+                    if (menuContainer) {
+                        menuContainer.innerHTML = '<div class="error-message">' + errorMsg + 
+                            '<br><br><button onclick="location.reload()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">🔄 Retry</button>' +
+                            '<br><br><small style="color: #999;">If the problem persists, please check:<br>1. API server is running<br>2. Network connection<br>3. MySQL database connection</small></div>';
+                    }
+                }
+                
+                let ordersLoadError = null;
+                try {
+                    console.log('Loading order data from MySQL...');
+                    const loadOrdersPromise = loadOrdersFromMySQL();
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Order loading timeout')), LOAD_TIMEOUT)
+                    );
+                    allOrders = await Promise.race([loadOrdersPromise, timeoutPromise]);
+                    console.log('✅ Orders loaded from MySQL:', allOrders.length, 'orders');
+                } catch (ordersError) {
+                    console.error('❌ Failed to load orders from MySQL:', ordersError);
+                    allOrders = [];
+                    ordersLoadError = ordersError;
+                    console.warn('⚠️ Orders loading failed:', ordersError.message);
+                }
+                
+                // If menu loading fails, don't continue rendering
+                if (menuLoadError) {
+                    return;
+                }
+                
+                // Set up polling listeners (MySQL uses polling instead of real-time)
+                try {
+                    console.log('🔍 Setting up MySQL polling listeners...');
+                    unsubscribeMenuItems = subscribeToMenuItems((items) => {
+                        console.log('🔄 Menu items updated via polling:', items.length, 'items received');
+                        menuItems = items;
+                        renderMenu();
+                        renderItemsList();
+                        renderRestaurantVisibilityControls();
+                        updateRestaurantFilter();
+                    });
+                    
+                    unsubscribeOrders = subscribeToOrders((orders) => {
+                        console.log('🔄 Orders updated via polling:', orders.length, 'orders');
+                        allOrders = orders;
+                        if (document.getElementById('ordersPage').classList.contains('active')) {
+                            renderAllOrders();
+                        }
+                    });
+                    
+                    unsubscribeHiddenRestaurants = subscribeToHiddenRestaurants((restaurants) => {
+                        console.log('🔄 Hidden restaurants updated via polling:', restaurants.length, 'restaurants');
+                        hiddenRestaurants = restaurants;
+                        renderMenu();
+                        renderRestaurantVisibilityControls();
+                        updateRestaurantFilter();
+                    });
+                    
+                    console.log('✅ MySQL polling listeners set up successfully');
+                } catch (subscribeError) {
+                    console.error('❌ Failed to set up polling subscriptions:', subscribeError);
+                }
+                
+                // Load hidden restaurants configuration (MySQL mode)
+                try {
+                    await loadHiddenRestaurants();
+                    console.log('✅ Hidden restaurants loaded from MySQL');
+                } catch (hiddenError) {
+                    console.error('Failed to load hidden restaurants:', hiddenError);
+                    hiddenRestaurants = [];
+                }
+                
+                console.log('✅ MySQL data loading completed');
+            } catch (mysqlError) {
+                console.error('MySQL initialization failed:', mysqlError);
+                const errorMsg = getErrorMessage(mysqlError, 'MySQL database');
+                if (menuContainer) {
+                    menuContainer.innerHTML = '<div class="error-message">' + errorMsg + 
+                        '<br><br><button onclick="location.reload()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">🔄 Retry</button>' +
+                        '<br><br><small style="color: #999;">If the problem persists, please check:<br>1. API server is running<br>2. Network connection<br>3. MySQL database connection</small></div>';
+                }
+                menuItems = [];
+                allOrders = [];
             }
         } else {
             // Use IndexedDB (local storage)
@@ -1344,16 +1500,16 @@ async function addMenuItem() {
                 }
                 
                 console.log('✅ Menu saved to storage:', menuItems.length, 'items');
-                console.log('💡 Real-time listener will automatically update the display when Firebase syncs');
                 
-                // 如果使用 Firebase，等待一下让实时监听有机会触发
-                // Firestore 的实时监听通常在保存后很快触发（通常 < 100ms）
+                // Wait for sync to complete
                 if (USE_FIREBASE) {
+                    console.log('💡 Real-time listener will automatically update the display when Firebase syncs');
                     console.log('⏳ Waiting for real-time sync to trigger...');
-                    // 等待 1 秒让实时监听有机会更新
-                    // 实时监听会自动更新 menuItems 和刷新显示
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     console.log('✅ Real-time sync should have triggered by now');
+                } else if (USE_MYSQL) {
+                    console.log('💡 Polling will automatically update the display');
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             } catch (e) {
                 // If storage fails, remove the item and show error
@@ -1514,7 +1670,7 @@ async function deleteOrder(orderId) {
                     console.log('🔄 Orders updated via real-time sync:', orders.length, 'orders');
                     allOrders = orders;
                     if (document.getElementById('ordersPage').classList.contains('active')) {
-                        renderAllOrders();
+            renderAllOrders();
                     }
                 });
             }
@@ -1565,10 +1721,15 @@ async function clearAllOrders() {
     }
     
     try {
-        // Temporarily disable real-time listener to prevent it from reloading data during clear
+        // Temporarily disable real-time listener/polling to prevent it from reloading data during clear
         let wasListening = false;
         if (USE_FIREBASE && unsubscribeOrders) {
             console.log('🔌 Temporarily disabling real-time listener during clear...');
+            unsubscribeOrders();
+            unsubscribeOrders = null;
+            wasListening = true;
+        } else if (USE_MYSQL && unsubscribeOrders) {
+            console.log('🔌 Temporarily disabling polling during clear...');
             unsubscribeOrders();
             unsubscribeOrders = null;
             wasListening = true;
@@ -1577,8 +1738,13 @@ async function clearAllOrders() {
         // Clear the local array
         allOrders = [];
         
-        // Clear from storage (Firebase or IndexedDB)
-        if (USE_FIREBASE) {
+        // Clear from storage (MySQL, Firebase, or IndexedDB)
+        if (USE_MYSQL) {
+            // Clear from MySQL
+            await clearAllOrdersFromMySQL();
+            console.log('✅ All orders cleared from MySQL');
+            await new Promise(resolve => setTimeout(resolve, 300));
+        } else if (USE_FIREBASE) {
             // Clear from Firestore
             await clearAllOrdersFromFirestore();
             console.log('✅ All orders cleared from Firestore');
@@ -1614,17 +1780,27 @@ async function clearAllOrders() {
         // Ensure allOrders array is empty before refreshing
         allOrders = [];
         
-        // Re-enable real-time listener if it was active
-        if (USE_FIREBASE && wasListening) {
+        // Re-enable real-time listener/polling if it was active
+        if (wasListening) {
+            if (USE_FIREBASE) {
             console.log('🔌 Re-enabling real-time listener...');
             unsubscribeOrders = subscribeToOrders((orders) => {
                 console.log('🔄 Orders updated via real-time sync:', orders.length, 'orders');
                 allOrders = orders;
-                // 如果当前在订单页面，刷新显示
                 if (document.getElementById('ordersPage').classList.contains('active')) {
                     renderAllOrders();
                 }
             });
+            } else if (USE_MYSQL) {
+                console.log('🔌 Re-enabling polling...');
+                unsubscribeOrders = subscribeToOrders((orders) => {
+                    console.log('🔄 Orders updated via polling:', orders.length, 'orders');
+                    allOrders = orders;
+                    if (document.getElementById('ordersPage').classList.contains('active')) {
+                        renderAllOrders();
+                    }
+                });
+            }
         }
         
         // Refresh the orders display (it will reload from storage, which should now be empty)
@@ -1821,7 +1997,7 @@ function renderMenu() {
     if (menuItems.length === 0) {
         container.innerHTML = '<div class="empty-message" style="padding: 40px; text-align: center; max-width: 600px; margin: 0 auto;">' +
             '<h3 style="color: #4CAF50; margin-bottom: 15px;">📋 Menu is Empty</h3>' +
-            '<p style="margin-bottom: 20px; color: #666;">No menu data in Firestore database yet.</p>' +
+            '<p style="margin-bottom: 20px; color: #666;">No menu data in database yet.</p>' +
             '<div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">' +
             '<p style="margin-bottom: 10px; font-weight: bold; color: #333;">How to add menu items:</p>' +
             '<ol style="margin-left: 20px; color: #666; line-height: 1.8;">' +
@@ -2039,7 +2215,12 @@ async function confirmOrder() {
     // Save to storage (optimized: only save new order if using Firebase)
     let saveSuccess = false;
     try {
-        if (USE_FIREBASE && typeof saveSingleOrderToFirestore === 'function') {
+        if (USE_MYSQL && typeof saveSingleOrderToMySQL === 'function') {
+            // Save single order to MySQL (more efficient)
+            await saveSingleOrderToMySQL(order);
+            console.log('✅ Order saved successfully to MySQL');
+            saveSuccess = true;
+        } else if (USE_FIREBASE && typeof saveSingleOrderToFirestore === 'function') {
             // 只保存新订单，而不是整个订单列表
             await saveSingleOrderToFirestore(order);
             console.log('✅ Order saved successfully to Firestore');
@@ -2069,9 +2250,12 @@ async function confirmOrder() {
             // 在后台重试保存
             setTimeout(async () => {
                 try {
-                    if (USE_FIREBASE && typeof saveSingleOrderToFirestore === 'function') {
+                    if (USE_MYSQL && typeof saveSingleOrderToMySQL === 'function') {
+                        await saveSingleOrderToMySQL(order);
+                        console.log('✅ Order saved successfully to MySQL after retry');
+                    } else if (USE_FIREBASE && typeof saveSingleOrderToFirestore === 'function') {
                         await saveSingleOrderToFirestore(order);
-                        console.log('✅ Order saved successfully after retry');
+                        console.log('✅ Order saved successfully to Firestore after retry');
                     }
                 } catch (retryError) {
                     console.error('Failed to save order in background retry:', retryError);
@@ -2207,7 +2391,7 @@ async function renderAllOrders(searchKeyword = '') {
     // Reload orders from storage to get latest data
     // But skip reload if we're in the middle of a delete operation to avoid overriding the deletion
     if (!window._isDeletingOrder) {
-        await loadOrdersFromStorage();
+    await loadOrdersFromStorage();
     }
     
     if (allOrders.length === 0) {
@@ -2519,10 +2703,15 @@ async function saveOrdersToIndexedDB(orders) {
     });
 }
 
-// Save menu to storage (Firebase or IndexedDB)
+// Save menu to storage (MySQL, Firebase, or IndexedDB)
 async function saveMenuToStorage() {
     try {
-        if (USE_FIREBASE) {
+        if (USE_MYSQL) {
+            // Use MySQL
+            await saveMenuItemsToMySQL(menuItems);
+            console.log('Menu saved to MySQL:', menuItems.length, 'items');
+            return true;
+        } else if (USE_FIREBASE) {
             // 使用 Firebase
             await saveMenuItemsToFirestore(menuItems);
             console.log('Menu saved to Firestore:', menuItems.length, 'items');
@@ -2557,10 +2746,14 @@ async function saveMenuToStorage() {
     }
 }
 
-// Load menu from storage (Firebase or IndexedDB)
+// Load menu from storage (MySQL, Firebase, or IndexedDB)
 async function loadMenuFromStorage() {
     try {
-        if (USE_FIREBASE) {
+        if (USE_MYSQL) {
+            // Use MySQL
+            menuItems = await loadMenuItemsFromMySQL();
+            return;
+        } else if (USE_FIREBASE) {
             // 使用 Firebase
             menuItems = await loadMenuItemsFromFirestore();
             return;
@@ -2655,10 +2848,14 @@ async function saveOrdersToStorage() {
     }
 }
 
-// Load orders from storage (Firebase or IndexedDB)
+// Load orders from storage (MySQL, Firebase, or IndexedDB)
 async function loadOrdersFromStorage() {
     try {
-        if (USE_FIREBASE) {
+        if (USE_MYSQL) {
+            // Use MySQL
+            allOrders = await loadOrdersFromMySQL();
+            return;
+        } else if (USE_FIREBASE) {
             // 使用 Firebase
             allOrders = await loadOrdersFromFirestore();
             return;

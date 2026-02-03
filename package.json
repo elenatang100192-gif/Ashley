@@ -1,0 +1,27 @@
+{
+  "name": "menu-selection-api",
+  "version": "1.0.0",
+  "description": "API server for Menu Selection System with MySQL backend",
+  "main": "api-server.js",
+  "scripts": {
+    "start": "node api-server.js",
+    "dev": "nodemon api-server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "firebase-admin": "^13.6.0",
+    "mysql2": "^3.6.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "menu",
+    "order",
+    "mysql",
+    "api"
+  ],
+  "author": "",
+  "license": "MIT"
+}

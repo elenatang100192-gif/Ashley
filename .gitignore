@@ -1,38 +1,39 @@
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
+# Dependencies
+node_modules/
+package-lock.json
 
-# Thumbnails
-._*
+# Environment variables
+.env
+.env.local
 
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Firebase service account key (if used)
+firebase-service-account-key.json
 
 # Logs
 *.log
 npm-debug.log*
 
-# OS generated files
+# OS files
+.DS_Store
 Thumbs.db
 
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+
+# Export files (generated)
+*-export.json
+menu-items-export.json
+orders-export.json
+settings-export.json
+
+# Test files
+test-*.html
+quick-migrate.html
+export-firestore-data.html
