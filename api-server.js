@@ -1,21 +1,29 @@
 // Node.js Express API Server for MySQL Database
 // Run: node api-server.js
 
+require('dotenv').config();
 const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// MySQL Configuration
+// MySQL Configuration from environment variables
 const dbConfig = {
-    host: '116.6.239.70',
-    port: 20010,
-    database: 'order_menu',
-    user: 'u_order_menu',
-    password: 'Gj9U#ERCarH-SZFGjUpvk9b',
+    host: process.env.DB_HOST || '116.6.239.70',
+    port: parseInt(process.env.DB_PORT) || 20010,
+    database: process.env.DB_NAME || 'order_menu',
+    user: process.env.DB_USER || 'u_order_menu',
+    password: process.env.DB_PASSWORD || '',
     charset: 'utf8mb4'
 };
+
+// Validate required environment variables
+if (!process.env.DB_PASSWORD) {
+    console.error('❌ Error: DB_PASSWORD environment variable is required!');
+    console.error('Please create a .env file based on .env.example');
+    process.exit(1);
+}
 
 // Middleware
 app.use(cors());

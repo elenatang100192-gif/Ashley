@@ -74,17 +74,18 @@ menu/
 
 ### Configuration
 
-**API Server Configuration** (`api-server.js`):
-```javascript
-const dbConfig = {
-    host: '116.6.239.70',
-    port: 20010,
-    database: 'order_menu',
-    user: 'u_order_menu',
-    password: 'Gj9U#ERCarH-SZFGjUpvk9b',
-    charset: 'utf8mb4'
-};
+**Environment Variables** (`.env` file):
+```bash
+# Copy .env.example to .env and fill in your values
+DB_HOST=116.6.239.70
+DB_PORT=20010
+DB_NAME=order_menu
+DB_USER=u_order_menu
+DB_PASSWORD=your_password_here
+PORT=3000
 ```
+
+**Note**: Database credentials are now stored in environment variables for security. Create a `.env` file based on `.env.example` before running the server.
 
 **Frontend Configuration** (`script.js`):
 ```javascript
@@ -106,10 +107,32 @@ API_BASE_URL: '/api'  // For localhost
 npm install
 ```
 
-### 2. Create Database Tables
+### 2. Configure Environment Variables
+
+Create a `.env` file in the project root:
 
 ```bash
-mysql -h 116.6.239.70 -P 20010 -u u_order_menu -p order_menu < mysql-schema.sql
+cp .env.example .env
+```
+
+Edit `.env` and fill in your database credentials:
+```bash
+DB_HOST=your_database_host
+DB_PORT=your_database_port
+DB_NAME=your_database_name
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
+PORT=3000
+```
+
+### 3. Create Database Tables
+
+```bash
+# Using environment variables (recommended)
+node create-tables.js
+
+# Or manually with MySQL client
+mysql -h $DB_HOST -P $DB_PORT -u $DB_USER -p $DB_NAME < mysql-schema.sql
 ```
 
 Or use the test script:
@@ -117,15 +140,22 @@ Or use the test script:
 node test-db-connection.js
 ```
 
-### 3. Start API Server
+### 4. Start API Server
+
+Make sure you have created the `.env` file with your database credentials first!
 
 ```bash
 node api-server.js
 ```
 
-The server will start on `http://localhost:3000`
+Or use npm:
+```bash
+npm start
+```
 
-### 4. Open Application
+The server will start on `http://localhost:3000` (or the port specified in `PORT` environment variable).
+
+### 5. Open Application
 
 Open `http://localhost:3000/index.html` in your browser.
 

@@ -1,14 +1,22 @@
 // Update existing menu items and orders to China Office
+require('dotenv').config();
 const mysql = require('mysql2/promise');
 
 const dbConfig = {
-    host: '116.6.239.70',
-    port: 20010,
-    database: 'order_menu',
-    user: 'u_order_menu',
-    password: 'Gj9U#ERCarH-SZFGjUpvk9b',
+    host: process.env.DB_HOST || '116.6.239.70',
+    port: parseInt(process.env.DB_PORT) || 20010,
+    database: process.env.DB_NAME || 'order_menu',
+    user: process.env.DB_USER || 'u_order_menu',
+    password: process.env.DB_PASSWORD || '',
     charset: 'utf8mb4'
 };
+
+// Validate required environment variables
+if (!process.env.DB_PASSWORD) {
+    console.error('❌ Error: DB_PASSWORD environment variable is required!');
+    console.error('Please create a .env file based on .env.example');
+    process.exit(1);
+}
 
 async function updateExistingData() {
     let connection;
@@ -21,10 +29,10 @@ async function updateExistingData() {
         const [columns] = await connection.execute(`
             SELECT COLUMN_NAME 
             FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_SCHEMA = 'order_menu' 
+            WHERE TABLE_SCHEMA = ? 
             AND TABLE_NAME = 'menu_items' 
             AND COLUMN_NAME = 'country'
-        `);
+        `, [dbConfig.database]);
         
         if (columns.length === 0) {
             console.log('📋 Adding country column to menu_items...');
@@ -49,10 +57,10 @@ async function updateExistingData() {
         const [orderColumns] = await connection.execute(`
             SELECT COLUMN_NAME 
             FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_SCHEMA = 'order_menu' 
+            WHERE TABLE_SCHEMA = ? 
             AND TABLE_NAME = 'orders' 
             AND COLUMN_NAME = 'country'
-        `);
+        `, [dbConfig.database]);
         
         if (orderColumns.length === 0) {
             console.log('📋 Adding country column to orders...');

@@ -1,19 +1,27 @@
 // Data Migration Script: Firestore to MySQL
 // Run: node migrate-to-mysql.js
 
+require('dotenv').config();
 const mysql = require('mysql2/promise');
 const admin = require('firebase-admin');
 const fs = require('fs');
 
-// MySQL Configuration
+// MySQL Configuration from environment variables
 const mysqlConfig = {
-    host: '116.6.239.70',
-    port: 20010,
-    database: 'order_menu',
-    user: 'u_order_menu',
-    password: 'Gj9U#ERCarH-SZFGjUpvk9b',
+    host: process.env.DB_HOST || '116.6.239.70',
+    port: parseInt(process.env.DB_PORT) || 20010,
+    database: process.env.DB_NAME || 'order_menu',
+    user: process.env.DB_USER || 'u_order_menu',
+    password: process.env.DB_PASSWORD || '',
     charset: 'utf8mb4'
 };
+
+// Validate required environment variables
+if (!process.env.DB_PASSWORD) {
+    console.error('❌ Error: DB_PASSWORD environment variable is required!');
+    console.error('Please create a .env file based on .env.example');
+    process.exit(1);
+}
 
 // Firebase Configuration (you need to provide service account key)
 // const serviceAccount = require('./firebase-service-account-key.json');
